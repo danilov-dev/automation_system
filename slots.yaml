@@ -1,0 +1,17 @@
+tcp:
+  host: 0.0.0.0
+  port: 8765
+  hello_timeout: 5.0
+
+slots:
+  slot1:
+    com_log:  /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A50285BI-if00-port0
+    com_ctrl: /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A50285BI-if02-port0
+    login: ad
+    password: "12345678"
+    tcp_ip: 192.168.1.101
+  slot2:
+    com_log:  /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A50285BJ-if00-port0
+    com_ctrl: /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A50285BJ-if02-port0
+    login: ad
+    password: "12345678"
