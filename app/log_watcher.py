@@ -17,7 +17,8 @@ from typing import Awaitable, Callable, Optional, Union
 import aioserial
 import serial
 
-from app.utils.console_logger import ConsoleLogger, LogLevel, strip_ansi
+from app.utils.console_logger import ConsoleLogger, LogLevel
+from app.utils.ansi_striper import strip_ansi
 
 
 LineCallback = Callable[[str], Union[None, Awaitable[None]]]
