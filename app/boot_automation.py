@@ -24,7 +24,7 @@ class BootAutomation:
         self.login = login
         self.password = password
         self.success_patterns = [
-            p.lower() for p in (success_patterns or ["~ ", "$ ", "# "])
+            p.lower() for p in (success_patterns or ["~", "$", "# "])
         ]
 
         self.is_logged_in = False
