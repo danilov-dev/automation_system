@@ -31,6 +31,9 @@ class TcpRouter:
         self._channels: Dict[str, TcpChannel] = {}
         self._server: Optional[asyncio.Server] = None
 
+        self._heartbeat_task = None
+        self._heartbeat_interval = 30.0
+
     # ── реестр каналов ────────────────────────────────────
 
     def register(self, channel: TcpChannel) -> None:
@@ -51,6 +54,9 @@ class TcpRouter:
         self._server = await asyncio.start_server(
             self._handler, self.host, self.port
         )
+
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+
         ConsoleLogger.write(
             f"[TCP] сервер слушает {self.host}:{self.actual_port}",
             LogLevel.SUCCESS,
@@ -58,6 +64,10 @@ class TcpRouter:
 
     async def stop(self) -> None:
         if self._server:
+
+            if self._heartbeat_task:
+                self._heartbeat_task.cancel()
+
             self._server.close()
             with suppress(Exception):
                 await self._server.wait_closed()
@@ -165,3 +175,14 @@ class TcpRouter:
             ConsoleLogger.write(
                 f"[TCP] {channel.pc_id} отключён", LogLevel.WARNING
             )
+
+    async def _heartbeat_loop(self):
+        """Периодически отправляет heartbeat всем подключенным клиентам."""
+        try:
+            while True:
+                await asyncio.sleep(self._heartbeat_interval)
+                for channel in self._channels.values():
+                    if channel.is_alive:
+                        await channel.send_heartbeat()
+        except asyncio.CancelledError:
+            pass

@@ -12,6 +12,7 @@ TCP-сервер общий (TcpRouter), writer приходит извне че
 """
 import asyncio
 from contextlib import suppress
+from datetime import datetime
 from typing import AsyncIterator, Optional
 
 from app.channels.base import ChannelDead
@@ -94,3 +95,24 @@ class TcpChannel:
     async def push(self, msg: dict) -> None:
         """Роутер кладёт сюда расшифрованные сообщения от клиента."""
         await self._incoming.put(msg)
+
+
+    # Добавил сердцебиение для того, чтобы клиент не умирал
+    async def send_heartbeat(self):
+        """Отправить heartbeat клиенту."""
+        if not self.is_alive:
+            return
+        try:
+            heartbeat = {"type": "heartbeat", "timestamp": datetime.now().isoformat()}
+            if self._writer is not None:
+                self._writer.write(encode(heartbeat))
+                await self._writer.drain()
+                ConsoleLogger.write(
+                    f"[{self.pc_id}] heartbeat send",
+                    LogLevel.INFO
+                )
+        except Exception as e:
+            ConsoleLogger.write(
+                f"[{self.pc_id}] heartbeat send failed: {e}",
+                LogLevel.WARNING
+            )
