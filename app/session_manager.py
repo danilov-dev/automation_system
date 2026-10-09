@@ -110,21 +110,12 @@ class SessionManager:
     def is_started(self) -> bool:
         return self._started
 
-    async def start_all(self) -> None:
-        if self._started:
-            return
+    async def start_all(self):
+        if not self.registry.router.is_started:
+            await self.registry.router.start()
 
-        # 1. Router первым — TCP-каналы должны иметь куда attach_writer'а
-        await self.registry.router.start()
-
-        # 2. PcSession — открывают serial, поднимают pump'ы, TCP уже слушается
-        for bundle in self.registry.slots.values():
-            await bundle.pc_session.start()
-
-        # 3. LogWatcher — открываем последним, чтобы если что-то упадёт выше,
-        #    COM1 не остался «висеть» без потребителей
-        for bundle in self.registry.slots.values():
-            await bundle.log_watcher.start()
+        for slot in self.registry.slots.values():
+            await slot.start()
 
         self._started = True
         ConsoleLogger.write(
@@ -132,28 +123,38 @@ class SessionManager:
             LogLevel.SUCCESS,
         )
 
-    async def stop_all(self) -> None:
+    async def start_slot(self, pc_id: str) -> None:
+        bundle = self.registry.get(pc_id)
+        if bundle is None:
+            return
+        await bundle.pc_session.start()
+        await bundle.log_watcher.start()
+
+    async def stop_all(self):
         if not self._started:
             return
 
-        # обратный порядок
-        for bundle in self.registry.slots.values():
+        for slot in self.registry.slots.values():
             try:
-                await bundle.log_watcher.stop()
-            except Exception as e:
+                await asyncio.wait_for(slot.stop(), timeout=5.0)
+            except asyncio.TimeoutError:
                 ConsoleLogger.write(
-                    f"[SessionManager] stop watcher {bundle.pc_id}: {e}",
+                    f"[SessionManager] Таймаут при остановке слота {slot.pc_id}",
                     LogLevel.ERROR,
                 )
-        for bundle in self.registry.slots.values():
-            try:
-                await bundle.pc_session.stop()
             except Exception as e:
                 ConsoleLogger.write(
-                    f"[SessionManager] stop session {bundle.pc_id}: {e}",
+                    f"[SessionManager] Ошибка при остановке слота {slot.pc_id}: {e}",
                     LogLevel.ERROR,
                 )
-        await self.registry.router.stop()
+
+        try:
+            await asyncio.wait_for(self.registry.router.stop(), timeout=5.0)
+        except asyncio.TimeoutError:
+            ConsoleLogger.write(
+                "[SessionManager] Таймаут при остановке роутера",
+                LogLevel.ERROR,
+            )
 
         self._started = False
         ConsoleLogger.write("[SessionManager] остановлен", LogLevel.INFO)
