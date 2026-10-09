@@ -74,6 +74,7 @@ class LogWatcher:
             ) from e
         self._alive = True
         self._reader_task = asyncio.create_task(self._read_loop())
+        await self._check_auth()
         ConsoleLogger.write(
             f"[{self.pc_id}] LogWatcher {self.port} открыт @ {self.baudrate}",
             LogLevel.INFO,
@@ -216,3 +217,7 @@ class LogWatcher:
             ConsoleLogger.write(
                 f"[{self.pc_id}] rule '{name}' async err: {e}", LogLevel.ERROR
             )
+
+    async def _check_auth(self):
+        # if self._alive and len(self.lines) < 0:
+        await self.send_line('\n')
