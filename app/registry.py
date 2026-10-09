@@ -1,14 +1,20 @@
-# app/registry.py
+"""
+Registry — конструктор объектов на основе AppConfig.
 
-from dataclasses import dataclass
+Собирает на каждый слот:
+  TcpChannel + SerialChannel → Slot
+  LogWatcher + BootAutomation
 
+И один общий TcpRouter, в который регистрируются все TcpChannel.
+
+НЕ запускает ничего. Старт/стоп — забота SlotManager.
+"""
 from app.channels.serial_channel import SerialChannel
 from app.channels.tcp import TcpChannel
 from app.channels.tcp_router import TcpRouter
 from app.config import AppConfig, SlotConfig
 from app.log_watcher import LogWatcher
 from app.boot_automation import BootAutomation
-from app.pc_session import PcSession
 from app.slot import Slot
 from app.utils.console_logger import ConsoleLogger, LogLevel
 
@@ -42,18 +48,16 @@ class Registry:
         self.router.register(tcp)
 
         # Создаём остальные компоненты
-        session = PcSession(sc.pc_id, primary=tcp, backup=serial)
         watcher = LogWatcher(sc.pc_id, sc.com_log)
         boot = BootAutomation(watcher, sc.login, sc.password)
 
-        # Создаём Slot — единую сущность
+        # Создаём Slot — единую сущность (PcSession больше не нужен)
         slot = Slot(
             pc_id=sc.pc_id,
             tcp_channel=tcp,
             serial_channel=serial,
             log_watcher=watcher,
             boot_automation=boot,
-            pc_session=session,
         )
 
         self.slots[sc.pc_id] = slot

@@ -1,10 +1,8 @@
 """
 TUI для automation_system на базе Textual.
-Не модифицирует код репозитория — только использует его API.
+Использует SlotManager и Slot (PcSession поглощён в Slot).
 
 Запуск:
-    python -m app.tui_app [slots.yaml]
-    или
     python tui.py [slots.yaml]
 """
 import asyncio
@@ -14,22 +12,23 @@ from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, Grid
+from textual.containers import Horizontal, Vertical
 from textual.widgets import (
     Header, Footer, Static, Button, Label,
-    Log, DataTable, Rule
+    Log, Rule
 )
 from textual.reactive import reactive
 from textual import on, work
 
 from app.config import load_config
 from app.registry import Registry
-from app.session_manager import SessionManager
+from app.slot_manager import SlotManager
+from app.slot import Slot, SlotState
 
 
 # ═══════════════════════════════════════════════════════════════
 #  CSS-стили
-# ══════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
 APP_CSS = """
 Screen {
     layout: vertical;
@@ -79,7 +78,7 @@ Screen {
     border: solid $secondary;
     padding: 1;
     margin: 1 0;
-    min-height: 10;
+    min-height: 12;
 }
 
 .slot-card.focused {
@@ -122,6 +121,10 @@ Screen {
     margin-bottom: 1;
 }
 
+#status-line {
+    color: grey;
+}
+
 .log-title {
     text-style: bold;
     color: $accent;
@@ -136,13 +139,12 @@ Screen {
 class SlotCard(Static):
     """Интерактивная карточка одного слота."""
 
-    def __init__(self, pc_id: str, mgr: SessionManager, reg: Registry, app_ref):
+    def __init__(self, pc_id: str, mgr: SlotManager, reg: Registry, app_ref):
         super().__init__()
         self.pc_id = pc_id
         self.mgr = mgr
         self.reg = reg
-        self.app_ref = app_ref  # ссылка на главное приложение
-        self._last_log_lines: list[str] = []
+        self.app_ref = app_ref
 
     def compose(self) -> ComposeResult:
         yield Label(f"🖥  {self.pc_id}", classes="slot-title")
@@ -171,49 +173,59 @@ class SlotCard(Static):
     async def _run_ping(self):
         try:
             self.query_one("#state-status").update("State: PING...")
-            result = await self.mgr.execute(
-                self.pc_id, "ping", {"target": "8.8.8.8", "count": 2}
+            slot = self.mgr.get_slot(self.pc_id)
+            if slot is None:
+                raise KeyError(f"slot {self.pc_id!r} не найден")
+
+            result = await slot.execute(
+                "ping", {"target": "8.8.8.8", "count": 2}
             )
             status = result.get("status", "unknown")
             self.query_one("#state-status").update(f"State: PING [{status}]")
             self.app_ref.system_log(f"[{self.pc_id}] Ping result: {status}")
         except Exception as e:
-            self.query_one("#state-status").update(f"State: ERROR")
+            self.query_one("#state-status").update("State: ERROR")
             self.app_ref.system_log(f"[{self.pc_id}] Ping error: {e}")
 
     async def _run_reboot(self):
         try:
             self.query_one("#state-status").update("State: REBOOTING...")
-            await self.mgr.execute(self.pc_id, "reboot", {})
+            slot = self.mgr.get_slot(self.pc_id)
+            if slot is None:
+                raise KeyError(f"slot {self.pc_id!r} не найден")
+
+            await slot.execute("reboot", {})
             self.app_ref.system_log(f"[{self.pc_id}] Reboot command sent")
         except Exception as e:
-            self.query_one("#state-status").update(f"State: ERROR")
+            self.query_one("#state-status").update("State: ERROR")
             self.app_ref.system_log(f"[{self.pc_id}] Reboot error: {e}")
 
     async def _run_info(self):
-        bundle = self.reg.get(self.pc_id)
-        if bundle is None:
+        slot = self.mgr.get_slot(self.pc_id)
+        if slot is None:
             return
+
         info_lines = [
-            f"PC ID: {bundle.pc_id}",
+            f"PC ID: {slot.pc_id}",
+            f"State: {slot.state.name}",
             f"TCP port: {self.reg.router.port}",
-            f"COM1 (log): {bundle.log_watcher.port}",
-            f"COM2 (ctrl): {bundle.serial_channel.port}",
-            f"Logged in: {bundle.boot_automation.is_logged_in}",
-            f"Last log lines: {len(bundle.log_watcher.lines)}",
+            f"COM1 (log): {slot.log_watcher.port}",
+            f"COM2 (ctrl): {slot.serial_channel.port}",
+            f"Logged in: {slot.boot_automation.is_logged_in}",
+            f"Last log lines: {len(slot.log_watcher.lines)}",
         ]
         self.app_ref.system_log(f"[{self.pc_id}] INFO: " + " | ".join(info_lines))
 
     # ─ Обновление статусов (вызывается из главного цикла) ────
     def refresh_status(self):
-        bundle = self.reg.get(self.pc_id)
-        if bundle is None:
+        slot = self.mgr.get_slot(self.pc_id)
+        if slot is None:
             return
 
-        tcp_alive = bundle.tcp_channel.is_alive
-        ser_alive = bundle.serial_channel.is_alive
-        log_alive = bundle.log_watcher.is_alive
-        logged_in = bundle.boot_automation.is_logged_in
+        tcp_alive = slot.tcp_channel.is_alive
+        ser_alive = slot.serial_channel.is_alive
+        log_alive = slot.log_watcher.is_alive
+        logged_in = slot.boot_automation.is_logged_in
 
         self._update_indicator("#tcp-status", "TCP", tcp_alive)
         self._update_indicator("#serial-status", "COM2", ser_alive)
@@ -225,9 +237,12 @@ class SlotCard(Static):
         auth_widget.remove_class("ok", "fail")
         auth_widget.add_class("ok" if logged_in else "fail")
 
+        # Обновляем состояние
+        self.set_state(slot.state.name)
+
         # Последние строки COM1
-        if bundle.log_watcher.lines:
-            last_line = bundle.log_watcher.lines[-1]
+        if slot.log_watcher.lines:
+            last_line = slot.log_watcher.lines[-1]
             self.app_ref.update_slot_log(self.pc_id, last_line)
 
     def _update_indicator(self, widget_id: str, name: str, alive: bool):
@@ -241,11 +256,13 @@ class SlotCard(Static):
         widget = self.query_one("#state-status")
         widget.update(f"State: {state.upper()}")
         widget.remove_class("ok", "warn", "fail")
-        if state in ("idle", "power_on"):
+
+        state_lower = state.lower()
+        if state_lower in ("idle", "ready", "power_on"):
             widget.add_class("ok")
-        elif state in ("reboot", "shutdown"):
+        elif state_lower in ("reboot", "shutdown", "testing"):
             widget.add_class("warn")
-        else:
+        elif state_lower in ("error", "offline"):
             widget.add_class("fail")
 
 
@@ -256,6 +273,7 @@ class AutomationTUI(App):
     """Главное TUI-приложение для стенда COM Express."""
 
     CSS = APP_CSS
+    MOUSE_ENABLED = False  # Отключаем мышь для стабильности
 
     BINDINGS = [
         Binding("q", "quit", "Quit", priority=True),
@@ -274,9 +292,9 @@ class AutomationTUI(App):
     def __init__(self, config_path: str = "slots.yaml"):
         super().__init__()
         self.config_path = config_path
-        self.cfg: object = None
+        self.cfg = None
         self.reg: Registry | None = None
-        self.mgr: SessionManager | None = None
+        self.mgr: SlotManager | None = None
         self.slot_cards: dict[str, SlotCard] = {}
         self.start_time: datetime | None = None
         self._slot_last_log: dict[str, str] = {}
@@ -304,11 +322,11 @@ class AutomationTUI(App):
 
             # Правая колонка — логи
             with Vertical(id="log-column"):
-                yield Label("SYSTEM LOG", classes="log-title")
+                yield Label("📋 SYSTEM LOG", classes="log-title")
                 yield Rule()
                 yield Log(id="system-log", highlight=True)
                 yield Rule()
-                yield Label(" SLOT ACTIVITY", classes="log-title")
+                yield Label("📟 SLOT ACTIVITY", classes="log-title")
                 yield Log(id="slot-log", highlight=True)
 
         # Статус-бар
@@ -316,7 +334,7 @@ class AutomationTUI(App):
 
         yield Footer()
 
-    # ── Инициализация ─────────────────────────────────────────
+    # ── Инициализация ────────────────────────────────────────
     def on_mount(self) -> None:
         self.start_time = datetime.now()
         self.title = "COM Express Test Stand"
@@ -325,7 +343,7 @@ class AutomationTUI(App):
         try:
             self.cfg = load_config(self.config_path)
             self.reg = Registry(self.cfg)
-            self.mgr = SessionManager(self.reg)
+            self.mgr = SlotManager(self.reg)
 
             # Подписка на события изменения состояния
             self.mgr.on_state_change(self._on_state_change_sync)
@@ -373,7 +391,7 @@ class AutomationTUI(App):
 
     # ── Callback изменения состояния слота ────────────────────
     def _on_state_change_sync(self, pc_id: str, state: str):
-        """Sync-callback от SessionManager. Делегируем в UI-поток."""
+        """Sync-callback от SlotManager. Делегируем в UI-поток."""
         self.call_next(self._handle_state_change, pc_id, state)
 
     def _handle_state_change(self, pc_id: str, state: str):
@@ -393,19 +411,19 @@ class AutomationTUI(App):
 
         # Счетчики
         active = sum(
-            1 for b in self.reg.slots.values() if b.tcp_channel.is_alive
+            1 for slot in self.reg.slots.values() if slot.tcp_channel.is_alive
         )
         reboot = sum(
-            1 for b in self.reg.slots.values()
-            if not b.boot_automation.is_logged_in
+            1 for slot in self.reg.slots.values()
+            if not slot.boot_automation.is_logged_in
         )
         com_count = sum(
-            (1 if b.serial_channel.is_alive else 0) +
-            (1 if b.log_watcher.is_alive else 0)
-            for b in self.reg.slots.values()
+            (1 if slot.serial_channel.is_alive else 0) +
+            (1 if slot.log_watcher.is_alive else 0)
+            for slot in self.reg.slots.values()
         )
         lan_count = sum(
-            1 for b in self.reg.slots.values() if b.tcp_channel.is_alive
+            1 for slot in self.reg.slots.values() if slot.tcp_channel.is_alive
         )
 
         self.active_slots = active
@@ -467,9 +485,9 @@ class AutomationTUI(App):
         else:
             self.run_worker(self._start_all(), exclusive=True)
 
-    # def action_refresh_view(self):
-    #     self.system_log("🔄 Manual refresh")
-    #     self._refresh_tick()
+    def action_refresh_view(self):
+        self.system_log("Manual refresh")
+        self._refresh_tick()
 
     def action_toggle_log(self):
         log_col = self.query_one("#log-column")
