@@ -11,6 +11,7 @@ TCP-сервер общий (TcpRouter), writer приходит извне че
   - is_alive      — есть ли сейчас writer и не закрыт ли он
 """
 import asyncio
+import time
 from contextlib import suppress
 from datetime import datetime
 from typing import AsyncIterator, Optional
@@ -30,16 +31,32 @@ class TcpChannel:
         self._started = False
         self._stopped = False
 
+        self._last_heartbeat_time: float = 0.0
+        self.heartbeat_timeout = 5
+
     # ── lifecycle ─────────────────────────────────────────
 
     @property
     def is_alive(self) -> bool:
-        return (
-            self._started
-            and not self._stopped
-            and self._writer is not None
-            and not self._writer.is_closing()
-        )
+        if not (
+                self._started
+                and not self._stopped
+                and self._writer is not None
+                and not self._writer.is_closing()
+        ):
+            return False
+
+        if self._last_heartbeat_time > 0:
+            elapsed = time.monotonic() - self._last_heartbeat_time
+            if elapsed > self.heartbeat_timeout:
+                ConsoleLogger.write(
+                    f"[{self.pc_id}] TCP heartbeat timeout: "
+                    f"no heartbeat for {elapsed:.0f}s",
+                    LogLevel.WARNING,
+                )
+                return False
+
+        return True
 
     async def start(self) -> None:
         """Ничего не открывает: сервер общий, writer придёт через attach_writer."""
@@ -52,7 +69,6 @@ class TcpChannel:
             with suppress(Exception):
                 self._writer.close()
             self._writer = None
-        # разбудить incoming()
         await self._incoming.put(None)
 
     # ── send / incoming ───────────────────────────────────
@@ -70,7 +86,7 @@ class TcpChannel:
     async def incoming(self) -> AsyncIterator[dict]:
         while True:
             msg = await self._incoming.get()
-            if msg is None:              # sentinel — канал закрыт
+            if msg is None:
                 return
             yield msg
 

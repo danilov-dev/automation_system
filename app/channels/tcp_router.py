@@ -33,6 +33,7 @@ class TcpRouter:
 
         self._heartbeat_task = None
         self._heartbeat_interval = 30.0
+        self.is_started = False
 
     # ── реестр каналов ────────────────────────────────────
 
@@ -57,6 +58,8 @@ class TcpRouter:
 
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
+        self.is_started = True
+
         ConsoleLogger.write(
             f"[TCP] сервер слушает {self.host}:{self.actual_port}",
             LogLevel.SUCCESS,
@@ -78,6 +81,8 @@ class TcpRouter:
                 with suppress(Exception):
                     ch._writer.close()
                 ch._writer = None
+        self.is_started = False
+
         ConsoleLogger.write("[TCP] сервер остановлен", LogLevel.INFO)
 
     # ── handler ───────────────────────────────────────────
