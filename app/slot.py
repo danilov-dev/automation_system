@@ -21,6 +21,7 @@ from typing import Optional
 from app.channels.base import Channel, ChannelDead, ChannelError
 from app.channels.serial_channel import SerialChannel
 from app.channels.tcp import TcpChannel
+from app.hardware.power_control import PowerControl
 from app.log_watcher import LogWatcher
 from app.boot_automation import BootAutomation
 from app.utils.console_logger import ConsoleLogger, LogLevel
@@ -108,12 +109,15 @@ class Slot:
         serial_channel: SerialChannel,
         log_watcher: LogWatcher,
         boot_automation: BootAutomation,
+        power_control: PowerControl,
     ):
         self.pc_id = pc_id
         self.tcp_channel = tcp_channel
         self.serial_channel = serial_channel
         self.log_watcher = log_watcher
         self.boot_automation = boot_automation
+
+        self.power_control = power_control
 
         self._state = SlotState.IDLE
         self._state_changed_at: Optional[datetime] = None
@@ -190,6 +194,12 @@ class Slot:
         if self._started:
             return
         self.set_state(SlotState.STARTING)
+
+        await self.power_control.power_on()
+        if not self.power_control.is_on:
+            self.set_state(SlotState.ERROR)
+            raise Exception(f"The slot '{self.pc_id}' did not receive power.")
+
         self._started = True
 
         try:
@@ -264,6 +274,7 @@ class Slot:
                 f"[{self.pc_id}] tcp stop error: {e}", LogLevel.ERROR
             )
 
+        await self.power_control.power_off()
         self.set_state(SlotState.IDLE)
 
     # ── Публичное API: выполнение задачи ────────────────────

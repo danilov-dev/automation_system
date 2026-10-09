@@ -123,6 +123,7 @@ class SlotManager:
             await slot.start()
 
         self._started = True
+
         ConsoleLogger.write(
             f"[SlotManager] запущено слотов: {len(self.registry.slots)}",
             LogLevel.SUCCESS,

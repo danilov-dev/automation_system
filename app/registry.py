@@ -13,10 +13,12 @@ from app.channels.serial_channel import SerialChannel
 from app.channels.tcp import TcpChannel
 from app.channels.tcp_router import TcpRouter
 from app.config import AppConfig, SlotConfig
+from app.hardware import power_control
 from app.log_watcher import LogWatcher
 from app.boot_automation import BootAutomation
 from app.slot import Slot
 from app.utils.console_logger import ConsoleLogger, LogLevel
+from app.hardware.power_control import PowerControl
 
 
 class Registry:
@@ -50,6 +52,7 @@ class Registry:
         # Создаём остальные компоненты
         watcher = LogWatcher(sc.pc_id, sc.com_log)
         boot = BootAutomation(watcher, sc.login, sc.password)
+        power_control = PowerControl(sc.pc_id)
 
         # Создаём Slot — единую сущность (PcSession больше не нужен)
         slot = Slot(
@@ -58,6 +61,7 @@ class Registry:
             serial_channel=serial,
             log_watcher=watcher,
             boot_automation=boot,
+            power_control=power_control,
         )
 
         self.slots[sc.pc_id] = slot
