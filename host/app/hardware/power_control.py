@@ -14,7 +14,7 @@ PowerControl — управление питанием слота.
 import asyncio
 from typing import Optional
 
-from app.utils.console_logger import ConsoleLogger, LogLevel
+from host.app.utils.console_logger import ConsoleLogger, LogLevel
 
 
 class PowerControl:
@@ -33,7 +33,7 @@ class PowerControl:
             return
         # Имитация задержки включения реле
         await asyncio.sleep(0.1)
-        self._is_on = False
+        self._is_on = True
         ConsoleLogger.write(
             f"[{self.pc_id}] POWER ON (stub)",
             LogLevel.SUCCESS,

@@ -18,13 +18,13 @@ from datetime import datetime
 from enum import Enum, auto
 from typing import Optional
 
-from app.channels.base import Channel, ChannelDead, ChannelError
-from app.channels.serial_channel import SerialChannel
-from app.channels.tcp import TcpChannel
-from app.hardware.power_control import PowerControl
-from app.log_watcher import LogWatcher
-from app.boot_automation import BootAutomation
-from app.utils.console_logger import ConsoleLogger, LogLevel
+from host.app.channels.base import Channel, ChannelDead, ChannelError
+from host.app.channels.serial_channel import SerialChannel
+from host.app.channels.tcp import TcpChannel
+from host.app.hardware.power_control import PowerControl
+from host.app.log_watcher import LogWatcher
+from host.app.boot_automation import BootAutomation
+from host.app.utils.console_logger import ConsoleLogger, LogLevel
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -204,8 +204,16 @@ class Slot:
 
         try:
             # Запускаем каналы (TcpChannel.start() только помечает started)
-            await self.tcp_channel.start()
-            await self.serial_channel.start()
+            try:
+                await self.tcp_channel.start()
+            except Exception as e:
+                ConsoleLogger.write(f"[{self.pc_id}] TCP channel failed to start: {e}", LogLevel.WARNING)
+
+            try:
+                await self.serial_channel.start()
+            except Exception as e:
+                ConsoleLogger.write(f"[{self.pc_id}] Serial channel failed to start: {e}", LogLevel.WARNING)
+
             await self.log_watcher.start()
 
             # Запускаем pump'ы для чтения отчётов из каналов
@@ -218,11 +226,13 @@ class Slot:
 
             self.set_state(SlotState.CONNECTING)
 
-            # Проверяем доступность каналов
-            if self.tcp_channel.is_alive:
-                self.set_state(SlotState.READY)
-            elif self.serial_channel.is_alive:
-                self.set_state(SlotState.READY)
+            timeout = 5.0
+            start_time = asyncio.get_event_loop().time()
+            while asyncio.get_event_loop().time() - start_time < timeout:
+                if self.tcp_channel.is_alive or self.serial_channel.is_alive:
+                    self.set_state(SlotState.READY)
+                    break
+                await asyncio.sleep(0.5)
             else:
                 self.set_state(SlotState.OFFLINE, "No channels available")
 

@@ -13,9 +13,9 @@ SlotManager — оркестратор парка слотов.
 import asyncio
 from typing import Awaitable, Callable, Union
 
-from app.registry import Registry
-from app.slot import Slot, SlotState
-from app.utils.console_logger import ConsoleLogger, LogLevel
+from host.app.registry import Registry
+from host.app.slot import Slot
+from host.app.utils.console_logger import ConsoleLogger, LogLevel
 
 
 # Колбэк о смене состояния слота: (pc_id, state_name)
@@ -116,7 +116,10 @@ class SlotManager:
 
         # Запускаем роутер, если ещё не запущен
         if not self.registry.router.is_started:
-            await self.registry.router.start()
+            try:
+                await self.registry.router.start()
+            except Exception as e:
+                ConsoleLogger.write(f"[SlotManager] start error: {e}", LogLevel.ERROR)
 
         # Запускаем все слоты
         for slot in self.registry.slots.values():

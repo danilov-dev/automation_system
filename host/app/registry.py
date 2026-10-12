@@ -9,16 +9,15 @@ Registry — конструктор объектов на основе AppConfig
 
 НЕ запускает ничего. Старт/стоп — забота SlotManager.
 """
-from app.channels.serial_channel import SerialChannel
-from app.channels.tcp import TcpChannel
-from app.channels.tcp_router import TcpRouter
-from app.config import AppConfig, SlotConfig
-from app.hardware import power_control
-from app.log_watcher import LogWatcher
-from app.boot_automation import BootAutomation
-from app.slot import Slot
-from app.utils.console_logger import ConsoleLogger, LogLevel
-from app.hardware.power_control import PowerControl
+from .channels.serial_channel import SerialChannel
+from .channels.tcp import TcpChannel
+from .channels.tcp_router import TcpRouter
+from .config import AppConfig, SlotConfig
+from .log_watcher import LogWatcher
+from .boot_automation import BootAutomation
+from .slot import Slot
+from .utils.console_logger import ConsoleLogger, LogLevel
+from .hardware.power_control import PowerControl
 
 
 class Registry:

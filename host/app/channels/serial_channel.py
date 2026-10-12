@@ -19,9 +19,9 @@ from typing import AsyncIterator, Optional
 import aioserial
 import serial
 
-from app.channels.base import ChannelDead
-from app.protocol import encode, decode
-from app.utils.console_logger import ConsoleLogger, LogLevel
+from .base import ChannelDead
+from host.app.protocol import encode, decode
+from host.app.utils.console_logger import ConsoleLogger, LogLevel
 
 
 class SerialChannel:

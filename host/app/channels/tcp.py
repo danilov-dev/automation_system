@@ -16,9 +16,9 @@ from contextlib import suppress
 from datetime import datetime
 from typing import AsyncIterator, Optional
 
-from app.channels.base import ChannelDead
-from app.protocol import encode
-from app.utils.console_logger import ConsoleLogger, LogLevel
+from .base import ChannelDead
+from host.app.protocol import encode
+from host.app.utils.console_logger import ConsoleLogger, LogLevel
 
 
 class TcpChannel:
