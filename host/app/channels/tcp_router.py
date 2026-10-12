@@ -12,9 +12,9 @@ import asyncio
 from contextlib import suppress
 from typing import Dict, Optional
 
-from app.channels.tcp import TcpChannel
-from app.protocol import decode
-from app.utils.console_logger import ConsoleLogger, LogLevel
+from .tcp import TcpChannel
+from host.app.protocol import decode
+from host.app.utils.console_logger import ConsoleLogger, LogLevel
 
 
 class TcpRouter:

@@ -8,8 +8,8 @@ BootAutomation — автологин через COM1.
 """
 import asyncio
 
-from app.log_watcher import LogWatcher
-from app.utils.console_logger import ConsoleLogger, LogLevel
+from host.app.log_watcher import LogWatcher
+from host.app.utils.console_logger import ConsoleLogger, LogLevel
 
 
 class BootAutomation:

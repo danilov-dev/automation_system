@@ -20,10 +20,9 @@ from textual.widgets import (
 from textual.reactive import reactive
 from textual import on, work
 
-from app.config import load_config
-from app.registry import Registry
-from app.slot_manager import SlotManager
-from app.slot import Slot, SlotState
+from host.app.config import load_config
+from host.app.registry import Registry
+from host.app.slot_manager import SlotManager
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -1,10 +1,12 @@
 import asyncio
-from app.config import load_config
-from app.registry import Registry
-from app.slot_manager import SlotManager
+from pathlib import Path
+
+from .app.config import load_config
+from .app.registry import Registry
+from .app.slot_manager import SlotManager
 
 async def main():
-    cfg = load_config("slots.yaml")
+    cfg = load_config(Path(__file__).parent / "slots.yaml")
     reg = Registry(cfg)
     mgr = SlotManager(reg)
 
