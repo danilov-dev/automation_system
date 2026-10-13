@@ -29,17 +29,25 @@ def encode(msg: dict) -> bytes:
     return (json.dumps(msg, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
 
 
-def decode(line: bytes) -> Optional[dict]:
+def decode(data=None) -> Optional[dict]:
     """
     bytes -> dict или None.
     Используем backslashreplace, чтобы любой бинарный мусор
     превращался в читаемый вид (например, \xff), а не в .
     """
-    s = line.decode("utf-8", errors="backslashreplace").strip()
-    if not s:
+
+    text = ''
+
+    if isinstance(data, bytes):
+        text = data.decode("utf-8", errors="backslashreplace").strip()
+    elif isinstance(data, str):
+        text = data
+    else:
+        return None
+    if not text:
         return None
     try:
-        obj = json.loads(s)
+        obj = json.loads(text)
     except json.JSONDecodeError:
-        return {"type": "raw", "text": s}
-    return obj if isinstance(obj, dict) else {"type": "raw", "text": s}
+        return {"type": "raw", "text": text}
+    return obj if isinstance(obj, dict) else {"type": "raw", "text": text}
