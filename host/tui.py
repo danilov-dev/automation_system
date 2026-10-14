@@ -9,6 +9,7 @@ TCP-канал больше не используется.
     python tui.py [slots.yaml]
 """
 import sys
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 
