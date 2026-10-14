@@ -7,6 +7,8 @@ ws:
   host: 0.0.0.0
   port: 8765
   hello_timeout: 5.0
+  ping_interval: 5.0
+  ping_timeout: 5.0
 
 slots:
   slot1:

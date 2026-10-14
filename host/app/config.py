@@ -35,6 +35,8 @@ class WsConfig:
     host: str = "0.0.0.0"
     port: int = 8765
     hello_timeout: float = 5.0
+    ping_interval: float = 10.0
+    ping_timeout: float = 10.0
 
 
 @dataclass
@@ -80,6 +82,8 @@ def load_config(path: str | Path) -> AppConfig:
         host=str(ws_raw.get("host", "0.0.0.0")),
         port=int(ws_raw.get("port", 8765)),
         hello_timeout=float(ws_raw.get("hello_timeout", 5.0)),
+        ping_interval=float(ws_raw.get("ping_interval", 10.0)),
+        ping_timeout=float(ws_raw.get("ping_timeout", 10.0)),
     )
 
     slots_raw = raw.get("slots")

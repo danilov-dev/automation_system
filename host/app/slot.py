@@ -334,6 +334,29 @@ class Slot:
 
     # ── Маршрутизация (failover) ────────────────────────────
 
+    async def _wait_report(self, record: _PendingTask, ch: Channel) -> dict:
+        """
+        Ждём финальный отчёт. Каждый in_progress продлевает окно.
+        Если канал умер — ChannelDead, вызывающий пойдёт на резерв.
+        """
+        while True:
+            record.progress.clear()
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(record.final),
+                    timeout=record.progress_timeout,
+                )
+            except asyncio.TimeoutError:
+                # ✅ Сначала проверяем живость канала
+                if not ch.is_alive:
+                    raise ChannelDead(
+                        f"{ch.name} died while waiting {record.task_id}"
+                    )
+                if not record.progress.is_set():
+                    raise
+                continue
+            return record.final.result()
+
     async def _route(self, payload: dict, record: _PendingTask) -> dict:
         tried: list[str] = []
         last_err: Exception | None = None
@@ -382,30 +405,11 @@ class Slot:
                 )
                 continue
 
-        raise AllChannelsFailed(self.pc_id, record.task_id, tried, last_err)
+        # ✅ Если все каналы умерли, устанавливаем состояние OFFLINE
+        if not any(ch.is_alive for ch in self.channels):
+            self.set_state(SlotState.OFFLINE, "All channels failed")
 
-    async def _wait_report(self, record: _PendingTask, ch: Channel) -> dict:
-        """
-        Ждём финальный отчёт. Каждый in_progress продлевает окно.
-        Если канал умер — ChannelDead, вызывающий пойдёт на резерв.
-        """
-        while True:
-            record.progress.clear()
-            try:
-                await asyncio.wait_for(
-                    asyncio.shield(record.final),
-                    timeout=record.progress_timeout,
-                )
-            except asyncio.TimeoutError:
-                # Сначала проверяем живость канала, потом прогресс
-                if not ch.is_alive:
-                    raise ChannelDead(
-                        f"{ch.name} died while waiting {record.task_id}"
-                    )
-                if not record.progress.is_set():
-                    raise
-                continue
-            return record.final.result()
+        raise AllChannelsFailed(self.pc_id, record.task_id, tried, last_err)
 
     # ─ Pump: чтение отчётов из каналов ─────────────────────
 

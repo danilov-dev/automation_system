@@ -1,10 +1,8 @@
 import asyncio
 from contextlib import suppress
 from typing import AsyncIterator, Optional
-
 from websockets.asyncio.server import ServerConnection
 from websockets.protocol import State
-
 from .base import ChannelDead
 from host.app.protocol import encode
 
@@ -24,8 +22,8 @@ class WsChannel:
         return (
                 self._started
                 and not self._stopped
-                and self.ws is not None
-                and self.ws.state is State.OPEN
+                and self._ws is not None
+                and self._ws.state is State.OPEN
         )
 
     @is_alive.setter
@@ -34,34 +32,31 @@ class WsChannel:
             self._started = False
             self._stopped = True
 
-    @property
-    def ws(self) -> Optional[ServerConnection]:
-        return self._ws
-    @ws.setter
-    def ws(self, value: ServerConnection) -> None:
-        if self._ws != value:
-            self._ws = value
-
-
     async def start(self) -> None:
         self._started = True
         self._stopped = False
 
     async def stop(self) -> None:
+        """Полная остановка канала (вызывается при stop() слота)."""
         self._stopped = True
-        if self.ws is not None:
+        self._started = False
+        if self._ws is not None:
+            # Принудительно закрываем транспорт
+            if hasattr(self._ws, 'transport') and self._ws.transport:
+                self._ws.transport.close()
             with suppress(Exception):
-                await self.ws.close()
-            self.ws = None
+                await self._ws.close()
+            self._ws = None
+        # Сигнал pump'у в Slot о завершении
         await self._incoming.put(None)
 
     async def send(self, msg: dict) -> None:
         if not self.is_alive:
             raise ChannelDead(f"[{self.pc_id}] ws not alive")
         try:
-            await self.ws.send(encode(msg).decode("utf-8"))
+            await self._ws.send(encode(msg).decode("utf-8"))
         except Exception as e:
-            self.ws = None
+            self._ws = None
             raise ChannelDead(f"[{self.pc_id}] ws write failed: {e}") from e
 
     async def incoming(self) -> AsyncIterator[dict]:
@@ -73,17 +68,26 @@ class WsChannel:
 
     # ── внутреннее API для WsRouter ───────────────────────
     async def attach_ws(self, ws: ServerConnection) -> None:
-        if self.ws is not None and self.ws is not ws:
+        """
+        Подключение нового ws-соединения.
+        Вызывается при каждом новом подключении клиента (включая повторные).
+        """
+        # Если было старое соединение - закрываем его
+        if self._ws is not None and self._ws is not ws:
             with suppress(Exception):
-                await self.ws.close()
-        self.ws = ws
+                await self._ws.close()
+
+        self._ws = ws
+        self._started = True
+        self._stopped = False
 
     def detach(self) -> None:
-        self.ws = None
-        self._started = False
-        self._stopped = True
-        with suppress(Exception):
-            self._incoming.put_nowait(None)
+        """
+        Отключение ws-соединения (обрыв связи).
+        НЕ убивает канал полностью - только обнуляет ws.
+        Pump в Slot продолжает работать и ждет повторного подключения.
+        """
+        self._ws = None
 
     async def push(self, msg: dict) -> None:
         await self._incoming.put(msg)

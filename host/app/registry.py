@@ -29,6 +29,8 @@ class Registry:
             host=cfg.ws.host,
             port=cfg.ws.port,
             hello_timeout=cfg.ws.hello_timeout,
+            ping_interval= cfg.ws.ping_interval,
+            ping_timeout=cfg.ws.ping_timeout,
         )
 
         self.slots: dict[str, Slot] = {}
