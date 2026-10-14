@@ -9,9 +9,10 @@ Registry — конструктор объектов на основе AppConfig
 
 НЕ запускает ничего. Старт/стоп — забота SlotManager.
 """
+from host.app.channels.ws_channel import WsChannel
+from .routers.ws_router import WsRouter
 from .channels.serial_channel import SerialChannel
-from .channels.tcp import TcpChannel
-from .channels.tcp_router import TcpRouter
+from .routers.tcp_router import TcpRouter
 from .config import AppConfig, SlotConfig
 from .log_watcher import LogWatcher
 from .boot_automation import BootAutomation
@@ -24,11 +25,12 @@ class Registry:
     def __init__(self, cfg: AppConfig):
         self.cfg = cfg
 
-        # Создаём TcpRouter ОДИН раз для всех слотов
-        self.router = TcpRouter(
-            host=cfg.tcp.host,
-            port=cfg.tcp.port,
-            hello_timeout=cfg.tcp.hello_timeout,
+        self.router = WsRouter(
+            host=cfg.ws.host,
+            port=cfg.ws.port,
+            hello_timeout=cfg.ws.hello_timeout,
+            ping_interval= cfg.ws.ping_interval,
+            ping_timeout=cfg.ws.ping_timeout,
         )
 
         self.slots: dict[str, Slot] = {}
@@ -42,11 +44,11 @@ class Registry:
 
     def _build_slot(self, sc: SlotConfig) -> None:
         # Создаём каналы
-        tcp = TcpChannel(sc.pc_id)
+        ws = WsChannel(sc.pc_id)
         serial = SerialChannel(sc.pc_id, sc.com_ctrl)
 
-        # ВАЖНО: регистрируем TCP-канал в роутере
-        self.router.register(tcp)
+        # ВАЖНО: регистрируем Websocket-канал в роутере
+        self.router.register(ws)
 
         # Создаём остальные компоненты
         watcher = LogWatcher(sc.pc_id, sc.com_log)
@@ -56,7 +58,7 @@ class Registry:
         # Создаём Slot — единую сущность (PcSession больше не нужен)
         slot = Slot(
             pc_id=sc.pc_id,
-            tcp_channel=tcp,
+            ws_channel=ws,
             serial_channel=serial,
             log_watcher=watcher,
             boot_automation=boot,

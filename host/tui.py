@@ -2,11 +2,14 @@
 TUI для automation_system на базе Textual.
 Использует SlotManager и Slot (PcSession поглощён в Slot).
 
+Транспорт: WebSocket (WsChannel) + Serial (SerialChannel).
+TCP-канал больше не используется.
+
 Запуск:
     python tui.py [slots.yaml]
 """
-import asyncio
 import sys
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 
@@ -15,10 +18,10 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import (
     Header, Footer, Static, Button, Label,
-    Log, Rule
+    Log, Rule,
 )
 from textual.reactive import reactive
-from textual import on, work
+from textual import on
 
 from host.app.config import load_config
 from host.app.registry import Registry
@@ -148,7 +151,7 @@ class SlotCard(Static):
     def compose(self) -> ComposeResult:
         yield Label(f"🖥  {self.pc_id}", classes="slot-title")
         yield Rule()
-        yield Static("TCP:   ● ---", id="tcp-status", classes="status-line")
+        yield Static("WS:    ● ---", id="ws-status", classes="status-line")
         yield Static("COM2:  ● ---", id="serial-status", classes="status-line")
         yield Static("COM1:  ● ---", id="log-status", classes="status-line")
         yield Static("Auth:  ---", id="auth-status", classes="status-line")
@@ -204,12 +207,22 @@ class SlotCard(Static):
         if slot is None:
             return
 
+        # ws_port — фактический порт сервера (может отличаться, если port=0)
+        try:
+            ws_port = self.reg.router.actual_port
+        except Exception:
+            ws_port = self.reg.cfg.ws.port
+
+        # log_watcher.port / serial_channel.port могут быть None, если не открыты
+        log_port = getattr(slot.log_watcher, "port", None)
+        ctrl_port = getattr(slot.serial_channel, "port", None)
+
         info_lines = [
             f"PC ID: {slot.pc_id}",
             f"State: {slot.state.name}",
-            f"TCP port: {self.reg.router.port}",
-            f"COM1 (log): {slot.log_watcher.port}",
-            f"COM2 (ctrl): {slot.serial_channel.port}",
+            f"WS url: ws://{self.reg.cfg.ws.host}:{ws_port}",
+            f"COM1 (log): {log_port}",
+            f"COM2 (ctrl): {ctrl_port}",
             f"Logged in: {slot.boot_automation.is_logged_in}",
             f"Last log lines: {len(slot.log_watcher.lines)}",
         ]
@@ -221,12 +234,12 @@ class SlotCard(Static):
         if slot is None:
             return
 
-        tcp_alive = slot.tcp_channel.is_alive
+        ws_alive = slot.ws_channel.is_alive
         ser_alive = slot.serial_channel.is_alive
         log_alive = slot.log_watcher.is_alive
         logged_in = slot.boot_automation.is_logged_in
 
-        self._update_indicator("#tcp-status", "TCP", tcp_alive)
+        self._update_indicator("#ws-status", "WS", ws_alive)
         self._update_indicator("#serial-status", "COM2", ser_alive)
         self._update_indicator("#log-status", "COM1", log_alive)
 
@@ -259,7 +272,7 @@ class SlotCard(Static):
         state_lower = state.lower()
         if state_lower in ("idle", "ready", "power_on"):
             widget.add_class("ok")
-        elif state_lower in ("reboot", "shutdown", "testing"):
+        elif state_lower in ("reboot", "rebooting", "shutdown", "testing"):
             widget.add_class("warn")
         elif state_lower in ("error", "offline"):
             widget.add_class("fail")
@@ -272,7 +285,6 @@ class AutomationTUI(App):
     """Главное TUI-приложение для стенда COM Express."""
 
     CSS = APP_CSS
-    MOUSE_ENABLED = False  # Отключаем мышь для стабильности
 
     BINDINGS = [
         Binding("q", "quit", "Quit", priority=True),
@@ -281,7 +293,6 @@ class AutomationTUI(App):
         Binding("l", "toggle_log", "Toggle Log"),
     ]
 
-    # Reactive-состояния для счетчиков
     total_slots = reactive(0)
     active_slots = reactive(0)
     reboot_slots = reactive(0)
@@ -302,24 +313,19 @@ class AutomationTUI(App):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
 
-        # Верхняя панель управления
         with Horizontal(id="top-bar"):
             yield Button("▶ Start All", id="btn-start", variant="success")
             yield Button("■ Stop All", id="btn-stop", variant="error")
             yield Static(
                 "Slots: 0 | Active: 0 | Reboot: 0",
-                id="counters"
+                id="counters",
             )
 
-        # Основная область
         with Horizontal(id="main-area"):
-            # Левая колонка — слоты
             with Vertical(id="slots-column"):
                 yield Label("SLOTS", id="section-title")
                 yield Rule()
-                # Карточки слотов монтируются динамически в on_mount
 
-            # Правая колонка — логи
             with Vertical(id="log-column"):
                 yield Label("📋 SYSTEM LOG", classes="log-title")
                 yield Rule()
@@ -328,9 +334,7 @@ class AutomationTUI(App):
                 yield Label("📟 SLOT ACTIVITY", classes="log-title")
                 yield Log(id="slot-log", highlight=True)
 
-        # Статус-бар
         yield Static("Ready — press 's' to start", id="status-bar")
-
         yield Footer()
 
     # ── Инициализация ────────────────────────────────────────
@@ -344,10 +348,8 @@ class AutomationTUI(App):
             self.reg = Registry(self.cfg)
             self.mgr = SlotManager(self.reg)
 
-            # Подписка на события изменения состояния
             self.mgr.on_state_change(self._on_state_change_sync)
 
-            # Создаем карточки слотов
             slots_column = self.query_one("#slots-column")
             for pc_id in self.reg.all_pc_ids():
                 card = SlotCard(pc_id, self.mgr, self.reg, self)
@@ -357,14 +359,16 @@ class AutomationTUI(App):
 
             self.total_slots = len(self.slot_cards)
             self.system_log(f"System initialized. Slots: {self.total_slots}")
-            self.system_log(f"   TCP server: {self.cfg.tcp.host}:{self.cfg.tcp.port}")
+            self.system_log(
+                f"   WS server: ws://{self.cfg.ws.host}:{self.cfg.ws.port}"
+            )
 
-            # Запускаем периодическое обновление
             self.set_interval(1.0, self._refresh_tick)
 
         except Exception as e:
             self.system_log(f"Init error: {e}")
-            self.query_one("#status-bar").update(f"ERROR: {e}")
+            with suppress(Exception):
+                self.query_one("#status-bar").update(f"ERROR: {e}")
 
     # ── Обработка кнопок верхней панели ───────────────────────
     @on(Button.Pressed)
@@ -390,8 +394,12 @@ class AutomationTUI(App):
 
     # ── Callback изменения состояния слота ────────────────────
     def _on_state_change_sync(self, pc_id: str, state: str):
-        """Sync-callback от SlotManager. Делегируем в UI-поток."""
-        self.call_next(self._handle_state_change, pc_id, state)
+        """Может быть sync- или async-колбэком. Делегируем в UI-поток."""
+        try:
+            self.call_next(self._handle_state_change, pc_id, state)
+        except Exception as e:
+            # call_next может упасть, если приложение уже закрывается
+            print(f"[TUI] state change drop: {pc_id} → {state}: {e}")
 
     def _handle_state_change(self, pc_id: str, state: str):
         self.system_log(f"[{pc_id}] State → {state.upper()}")
@@ -400,38 +408,28 @@ class AutomationTUI(App):
 
     # ── Периодическое обновление ──────────────────────────────
     def _refresh_tick(self):
-        """Вызывается каждую секунду для обновления UI."""
-        if not self.reg:
+        if not self.reg or self.mgr is None:
             return
 
-        # Обновляем карточки
         for pc_id, card in self.slot_cards.items():
             card.refresh_status()
 
-        # Счетчики
-        active = sum(
-            1 for slot in self.reg.slots.values() if slot.tcp_channel.is_alive
-        )
-        reboot = sum(
-            1 for slot in self.reg.slots.values()
-            if not slot.boot_automation.is_logged_in
-        )
+        slots = self.reg.slots.values()
+        active = sum(1 for s in slots if s.ws_channel.is_alive)
+        reboot = sum(1 for s in slots if not s.boot_automation.is_logged_in)
         com_count = sum(
-            (1 if slot.serial_channel.is_alive else 0) +
-            (1 if slot.log_watcher.is_alive else 0)
-            for slot in self.reg.slots.values()
+            (1 if s.serial_channel.is_alive else 0)
+            + (1 if s.log_watcher.is_alive else 0)
+            for s in slots
         )
-        lan_count = sum(
-            1 for slot in self.reg.slots.values() if slot.tcp_channel.is_alive
-        )
+        lan_count = active
 
         self.active_slots = active
         self.reboot_slots = reboot
         self.com_ports_count = com_count
         self.lan_count = lan_count
 
-        # Статус-бар
-        if self.mgr and self.mgr.is_started:
+        if self.mgr.is_started:
             uptime = datetime.now() - self.start_time
             uptime_str = str(uptime).split(".")[0]
             self.query_one("#status-bar").update(
@@ -460,20 +458,17 @@ class AutomationTUI(App):
 
     # ── Логирование ──────────────────────────────────────────
     def system_log(self, message: str):
-        """Добавить запись в общий системный лог."""
         log_widget = self.query_one("#system-log")
         timestamp = datetime.now().strftime("%H:%M:%S")
         log_widget.write_line(f"[{timestamp}] {message}")
 
     def update_slot_log(self, pc_id: str, line: str):
-        """Обновить лог активности слота (только если строка новая)."""
         last = self._slot_last_log.get(pc_id)
         if last == line:
             return
         self._slot_last_log[pc_id] = line
         log_widget = self.query_one("#slot-log")
         timestamp = datetime.now().strftime("%H:%M:%S")
-        # Обрезаем длинные строки
         short_line = line[:80] + "..." if len(line) > 80 else line
         log_widget.write_line(f"[{timestamp}] [{pc_id}] {short_line}")
 

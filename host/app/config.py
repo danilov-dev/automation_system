@@ -31,6 +31,15 @@ class TcpConfig:
 
 
 @dataclass
+class WsConfig:
+    host: str = "0.0.0.0"
+    port: int = 8765
+    hello_timeout: float = 5.0
+    ping_interval: float = 10.0
+    ping_timeout: float = 10.0
+
+
+@dataclass
 class SlotConfig:
     pc_id: str
     com_log: str
@@ -42,7 +51,7 @@ class SlotConfig:
 
 @dataclass
 class AppConfig:
-    tcp: TcpConfig
+    ws: WsConfig
     slots: dict[str, SlotConfig] = field(default_factory=dict)
 
     def get_slot(self, pc_id: str) -> SlotConfig:
@@ -64,13 +73,17 @@ def load_config(path: str | Path) -> AppConfig:
     if not isinstance(raw, dict):
         raise ConfigError("корень конфига должен быть словарём")
 
-    tcp_raw = raw.get("tcp") or {}
-    if not isinstance(tcp_raw, dict):
-        raise ConfigError("секция tcp должна быть словарём")
-    tcp = TcpConfig(
-        host=str(tcp_raw.get("host", "0.0.0.0")),
-        port=int(tcp_raw.get("port", 8765)),
-        hello_timeout=float(tcp_raw.get("hello_timeout", 5.0)),
+    ws_raw = raw.get("ws") or {}
+
+    if not isinstance(ws_raw, dict):
+        raise ConfigError("секция ws должна быть словарём")
+
+    ws = WsConfig(
+        host=str(ws_raw.get("host", "0.0.0.0")),
+        port=int(ws_raw.get("port", 8765)),
+        hello_timeout=float(ws_raw.get("hello_timeout", 5.0)),
+        ping_interval=float(ws_raw.get("ping_interval", 10.0)),
+        ping_timeout=float(ws_raw.get("ping_timeout", 10.0)),
     )
 
     slots_raw = raw.get("slots")
@@ -97,4 +110,4 @@ def load_config(path: str | Path) -> AppConfig:
             raise ConfigError(f"slot {pc_id!r}: неверные поля ({e})") from e
         slots[cfg.pc_id] = cfg
 
-    return AppConfig(tcp=tcp, slots=slots)
+    return AppConfig(ws=ws, slots=slots)

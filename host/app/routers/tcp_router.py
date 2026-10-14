@@ -1,6 +1,5 @@
 """
 TcpRouter — единый TCP-сервер для всех слотов.
-
 Логика:
   1. Принимает TCP-подключение.
   2. Ждёт первый пакет {"type":"hello","pc_id":"slotN"} с таймаутом.
@@ -12,38 +11,30 @@ import asyncio
 from contextlib import suppress
 from typing import Dict, Optional
 
-from .tcp import TcpChannel
+from .base_router import BaseRouter
+from host.app.channels.tcp import TcpChannel
 from host.app.protocol import decode
 from host.app.utils.console_logger import ConsoleLogger, LogLevel
 
 
-class TcpRouter:
+class TcpRouter(BaseRouter):
     def __init__(
         self,
         host: str = "0.0.0.0",
         port: int = 8765,
         hello_timeout: float = 5.0,
     ):
-        self.host = host
-        self.port = port
-        self.hello_timeout = hello_timeout
-
+        super().__init__(host=host, port=port, hello_timeout=hello_timeout)
         self._channels: Dict[str, TcpChannel] = {}
         self._server: Optional[asyncio.Server] = None
 
-        self._heartbeat_task = None
-        self._heartbeat_interval = 30.0
-        self.is_started = False
-
     # ── реестр каналов ────────────────────────────────────
-
     def register(self, channel: TcpChannel) -> None:
         if channel.pc_id in self._channels:
             raise ValueError(f"pc_id '{channel.pc_id}' уже зарегистрирован")
         self._channels[channel.pc_id] = channel
 
     # ── lifecycle ─────────────────────────────────────────
-
     @property
     def actual_port(self) -> int:
         """Фактический порт (полезно в тестах с port=0)."""
@@ -55,38 +46,36 @@ class TcpRouter:
         self._server = await asyncio.start_server(
             self._handler, self.host, self.port
         )
-
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-
         self.is_started = True
-
         ConsoleLogger.write(
             f"[TCP] сервер слушает {self.host}:{self.actual_port}",
             LogLevel.SUCCESS,
         )
 
     async def stop(self) -> None:
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._heartbeat_task
+            self._heartbeat_task = None
+
         if self._server:
-
-            if self._heartbeat_task:
-                self._heartbeat_task.cancel()
-
             self._server.close()
             with suppress(Exception):
                 await self._server.wait_closed()
             self._server = None
-        # закрыть всех клиентов, чтобы reader-loop'ы завершились
+
         for ch in self._channels.values():
             if ch._writer is not None:
                 with suppress(Exception):
                     ch._writer.close()
                 ch._writer = None
-        self.is_started = False
 
+        self.is_started = False
         ConsoleLogger.write("[TCP] сервер остановлен", LogLevel.INFO)
 
     # ── handler ───────────────────────────────────────────
-
     async def _handler(
         self,
         reader: asyncio.StreamReader,
@@ -106,7 +95,6 @@ class TcpRouter:
                 LogLevel.ERROR,
             )
         finally:
-            # снять writer и закрыть соединение
             for ch in self._channels.values():
                 if ch._writer is writer:
                     ch.detach()
@@ -180,14 +168,3 @@ class TcpRouter:
             ConsoleLogger.write(
                 f"[TCP] {channel.pc_id} отключён", LogLevel.WARNING
             )
-
-    async def _heartbeat_loop(self):
-        """Периодически отправляет heartbeat всем подключенным клиентам."""
-        try:
-            while True:
-                await asyncio.sleep(self._heartbeat_interval)
-                for channel in self._channels.values():
-                    if channel.is_alive:
-                        await channel.send_heartbeat()
-        except asyncio.CancelledError:
-            pass

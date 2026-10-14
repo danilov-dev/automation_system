@@ -2,13 +2,13 @@
 Slot — полноценная сущность тестируемого ПК.
 
 Инкапсулирует:
-  - Все компоненты (TCP, Serial, LogWatcher, BootAutomation)
+  - Все компоненты (WS, Serial, LogWatcher, BootAutomation)
   - Логику маршрутизации задач и failover (бывший PcSession)
   - Состояние слота и переходы между состояниями
   - Единый интерфейс для внешнего мира
 
 Не знает:
-  - про TcpRouter (роутер регистрирует каналы сам)
+  - про WsRouter (роутер регистрирует каналы сам)
   - про TUI / FastAPI / оркестратор
 """
 import asyncio
@@ -18,9 +18,9 @@ from datetime import datetime
 from enum import Enum, auto
 from typing import Optional
 
+from host.app.channels.ws_channel import WsChannel
 from host.app.channels.base import Channel, ChannelDead, ChannelError
 from host.app.channels.serial_channel import SerialChannel
-from host.app.channels.tcp import TcpChannel
 from host.app.hardware.power_control import PowerControl
 from host.app.log_watcher import LogWatcher
 from host.app.boot_automation import BootAutomation
@@ -83,7 +83,7 @@ class _PendingTask:
 class SlotState(Enum):
     IDLE = auto()          # Инициализирован, но не запущен
     STARTING = auto()      # Запускается
-    CONNECTING = auto()    # Ждёт подключения клиента (TCP handshake)
+    CONNECTING = auto()    # Ждёт подключения клиента (WS handshake)
     READY = auto()         # Готов к работе
     TESTING = auto()       # Выполняет тест
     REBOOTING = auto()     # Перезагружается
@@ -98,25 +98,24 @@ class SlotState(Enum):
 class Slot:
     """
     Полноценная сущность слота.
-    Держит два канала (primary=TCP, backup=Serial), роутит задачи и отчёты,
+    Держит два канала (primary=WS, backup=Serial), роутит задачи и отчёты,
     делает failover с сохранением task_id.
     """
 
     def __init__(
         self,
         pc_id: str,
-        tcp_channel: TcpChannel,
+        ws_channel: WsChannel,
         serial_channel: SerialChannel,
         log_watcher: LogWatcher,
         boot_automation: BootAutomation,
         power_control: PowerControl,
     ):
         self.pc_id = pc_id
-        self.tcp_channel = tcp_channel
+        self.ws_channel = ws_channel
         self.serial_channel = serial_channel
         self.log_watcher = log_watcher
         self.boot_automation = boot_automation
-
         self.power_control = power_control
 
         self._state = SlotState.IDLE
@@ -154,8 +153,8 @@ class Slot:
     # ── Статусы каналов ────────────────────────────────────
 
     @property
-    def tcp_alive(self) -> bool:
-        return self.tcp_channel.is_alive
+    def ws_alive(self) -> bool:
+        return self.ws_channel.is_alive
 
     @property
     def serial_alive(self) -> bool:
@@ -171,7 +170,7 @@ class Slot:
 
     @property
     def channels(self) -> list[Channel]:
-        return [self.tcp_channel, self.serial_channel]
+        return [self.ws_channel, self.serial_channel]
 
     # ── Управление состоянием ───────────────────────────────
 
@@ -203,16 +202,22 @@ class Slot:
         self._started = True
 
         try:
-            # Запускаем каналы (TcpChannel.start() только помечает started)
+            # Запускаем каналы (WsChannel.start() только помечает started)
             try:
-                await self.tcp_channel.start()
+                await self.ws_channel.start()
             except Exception as e:
-                ConsoleLogger.write(f"[{self.pc_id}] TCP channel failed to start: {e}", LogLevel.WARNING)
+                ConsoleLogger.write(
+                    f"[{self.pc_id}] WS channel failed to start: {e}",
+                    LogLevel.WARNING,
+                )
 
             try:
                 await self.serial_channel.start()
             except Exception as e:
-                ConsoleLogger.write(f"[{self.pc_id}] Serial channel failed to start: {e}", LogLevel.WARNING)
+                ConsoleLogger.write(
+                    f"[{self.pc_id}] Serial channel failed to start: {e}",
+                    LogLevel.WARNING,
+                )
 
             await self.log_watcher.start()
 
@@ -227,9 +232,10 @@ class Slot:
             self.set_state(SlotState.CONNECTING)
 
             timeout = 5.0
-            start_time = asyncio.get_event_loop().time()
-            while asyncio.get_event_loop().time() - start_time < timeout:
-                if self.tcp_channel.is_alive or self.serial_channel.is_alive:
+            loop = asyncio.get_running_loop()
+            start_time = loop.time()
+            while loop.time() - start_time < timeout:
+                if self.ws_channel.is_alive or self.serial_channel.is_alive:
                     self.set_state(SlotState.READY)
                     break
                 await asyncio.sleep(0.5)
@@ -278,10 +284,10 @@ class Slot:
                 f"[{self.pc_id}] serial stop error: {e}", LogLevel.ERROR
             )
         try:
-            await self.tcp_channel.stop()
+            await self.ws_channel.stop()
         except Exception as e:
             ConsoleLogger.write(
-                f"[{self.pc_id}] tcp stop error: {e}", LogLevel.ERROR
+                f"[{self.pc_id}] ws stop error: {e}", LogLevel.ERROR
             )
 
         await self.power_control.power_off()
@@ -327,6 +333,29 @@ class Slot:
                 self.set_state(SlotState.READY)
 
     # ── Маршрутизация (failover) ────────────────────────────
+
+    async def _wait_report(self, record: _PendingTask, ch: Channel) -> dict:
+        """
+        Ждём финальный отчёт. Каждый in_progress продлевает окно.
+        Если канал умер — ChannelDead, вызывающий пойдёт на резерв.
+        """
+        while True:
+            record.progress.clear()
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(record.final),
+                    timeout=record.progress_timeout,
+                )
+            except asyncio.TimeoutError:
+                # ✅ Сначала проверяем живость канала
+                if not ch.is_alive:
+                    raise ChannelDead(
+                        f"{ch.name} died while waiting {record.task_id}"
+                    )
+                if not record.progress.is_set():
+                    raise
+                continue
+            return record.final.result()
 
     async def _route(self, payload: dict, record: _PendingTask) -> dict:
         tried: list[str] = []
@@ -376,30 +405,11 @@ class Slot:
                 )
                 continue
 
-        raise AllChannelsFailed(self.pc_id, record.task_id, tried, last_err)
+        # ✅ Если все каналы умерли, устанавливаем состояние OFFLINE
+        if not any(ch.is_alive for ch in self.channels):
+            self.set_state(SlotState.OFFLINE, "All channels failed")
 
-    async def _wait_report(self, record: _PendingTask, ch: Channel) -> dict:
-        """
-        Ждём финальный отчёт. Каждый in_progress продлевает окно.
-        Если канал умер — ChannelDead, вызывающий пойдёт на резерв.
-        """
-        while True:
-            record.progress.clear()
-            try:
-                await asyncio.wait_for(
-                    asyncio.shield(record.final),
-                    timeout=record.progress_timeout,
-                )
-            except asyncio.TimeoutError:
-                # Сначала проверяем живость канала, потом прогресс
-                if not ch.is_alive:
-                    raise ChannelDead(
-                        f"{ch.name} died while waiting {record.task_id}"
-                    )
-                if not record.progress.is_set():
-                    raise
-                continue
-            return record.final.result()
+        raise AllChannelsFailed(self.pc_id, record.task_id, tried, last_err)
 
     # ─ Pump: чтение отчётов из каналов ─────────────────────
 
@@ -447,7 +457,7 @@ class Slot:
             "pc_id": self.pc_id,
             "state": self._state.name,
             "state_duration": self.state_duration,
-            "tcp_alive": self.tcp_alive,
+            "ws_alive": self.ws_alive,
             "serial_alive": self.serial_alive,
             "log_watcher_alive": self.log_watcher_alive,
             "is_logged_in": self.is_logged_in,

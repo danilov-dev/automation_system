@@ -4,7 +4,7 @@ import pytest
 
 from app.channels.base import ChannelDead
 from app.channels.tcp import TcpChannel
-from app.channels.tcp_router import TcpRouter
+from routers.tcp_router import TcpRouter
 from app.protocol import encode
 
 
