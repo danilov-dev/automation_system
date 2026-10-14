@@ -30,6 +30,8 @@ class WsRouter(BaseRouter):
         super().__init__(host=host, port=port, hello_timeout=hello_timeout)
         self._channels: Dict[str, WsChannel] = {}
         self._server: Optional[Server] = None
+        self.ping_timeout = 10.0
+        self.ping_interval = 10.0
 
     # ── реестр каналов ────────────────────────────────────
     def register(self, channel: WsChannel) -> None:
@@ -52,22 +54,35 @@ class WsRouter(BaseRouter):
             self._handler,
             self.host,
             self.port,
+            ping_interval=self.ping_interval,
+            ping_timeout=self.ping_timeout,
         )
         self.is_started = True
         ConsoleLogger.write(f"[WS] сервер слушает ws://{self.host}:{self.actual_port}", LogLevel.SUCCESS, )
 
     async def stop(self) -> None:
         if self._server:
+            # 1. Запрещаем принимать новые подключения
             self._server.close()
+
+            # ✅ ИСПРАВЛЕНИЕ 2: Принудительно рвем все активные TCP-соединения
+            # Это нужно, чтобы хендлеры не висли в ожидании данных от "мертвых" клиентов
+            for ch in self._channels.values():
+                if ch.ws is not None:
+                    try:
+                        # Закрываем именно asyncio transport, чтобы не ждать ACK от отключенного ПК
+                        if hasattr(ch.ws, 'transport') and ch.ws.transport:
+                            ch.ws.transport.close()
+                        else:
+                            # Фоллбэк, если транспорт недоступен
+                            await asyncio.wait_for(ch.ws.close(), timeout=0.5)
+                    except Exception:
+                        pass
+                    ch.ws = None
+
+            # 2. Теперь ждем завершения хендлеров (они упадут с ошибкой из-за закрытого транспорта)
             await self._server.wait_closed()
             self._server = None
-
-        # закрыть всех клиентов, чтобы handler'ы завершились
-        for ch in self._channels.values():
-            if ch._ws is not None:
-                with suppress(Exception):
-                    await ch._ws.close()
-                ch._ws = None
 
         self.is_started = False
         ConsoleLogger.write("[WS] сервер остановлен", LogLevel.INFO)
@@ -89,8 +104,11 @@ class WsRouter(BaseRouter):
         finally:
             if channel is not None:
                 channel.detach()
-            with suppress(Exception):
-                await ws.close()
+                ConsoleLogger.write(
+                    f"[WS] Канал {channel.pc_id} переведен в неактивное состояние.is_alive={channel.is_alive}",
+                    LogLevel.WARNING)
+                with suppress(Exception):
+                    await ws.close()
 
     async def _handshake(self, ws, remote) -> Optional[WsChannel]:
         try:
