@@ -32,6 +32,15 @@ class WsChannel:
             self._started = False
             self._stopped = True
 
+    @property
+    def ws(self) -> Optional[ServerConnection]:
+        return self._ws
+
+    @ws.setter
+    def ws(self, value: Optional[ServerConnection]) -> None:
+        if value is not None or self._ws != value:
+            self._ws = value
+
     async def start(self) -> None:
         self._started = True
         self._stopped = False
@@ -47,7 +56,6 @@ class WsChannel:
             with suppress(Exception):
                 await self._ws.close()
             self._ws = None
-        # Сигнал pump'у в Slot о завершении
         await self._incoming.put(None)
 
     async def send(self, msg: dict) -> None:

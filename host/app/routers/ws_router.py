@@ -63,15 +63,15 @@ class WsRouter(BaseRouter):
 
             # 2. Принудительно рвем все активные TCP-соединения
             for ch in self._channels.values():
-                if ch._ws is not None:
+                if ch.ws is not None:
                     try:
-                        if hasattr(ch._ws, 'transport') and ch._ws.transport:
-                            ch._ws.transport.close()
+                        if hasattr(ch.ws, 'transport') and ch.ws.transport:
+                            ch.ws.transport.close()
                         else:
-                            await asyncio.wait_for(ch._ws.close(), timeout=0.5)
+                            await asyncio.wait_for(ch.ws.close(), timeout=0.5)
                     except Exception:
                         pass
-                    ch._ws = None
+                    ch.ws = None
 
             # 3. Ждем завершения хендлеров
             await self._server.wait_closed()
@@ -111,7 +111,6 @@ class WsRouter(BaseRouter):
                     f"Ожидается повторное подключение...",
                     LogLevel.WARNING,
                 )
-                # ✅ ИСПРАВЛЕНИЕ: не закрываем ws повторно, он уже закрыт
 
     async def _handshake(self, ws, remote) -> Optional[WsChannel]:
         try:
