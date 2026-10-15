@@ -1,0 +1,163 @@
+Screen {
+    layout: vertical;
+    background: $background;
+}
+
+/* --- Top bar --- */
+#top-bar {
+    height: 5;
+    background: $background;
+    color: $text;
+    padding: 0 1;
+    align: right middle;
+    border-bottom: tall $accent;
+}
+
+#top-bar Button {
+    margin: 0 1;
+}
+
+.label-container {
+    height: 1fr;
+    align: left middle;
+}
+
+/* --- Вкладки --- */
+#tabs {
+    height: 5fr;
+}
+
+#tabs ContentSwitcher {
+    height: 1fr;
+}
+
+TabPane {
+    height: 1fr;
+    padding: 0;
+}
+
+/* --- Сетка мини-карточек --- */
+#main-area-all {
+    height: 1fr;
+}
+
+.mini-grid {
+    layout: grid;
+    grid-size: 2 2;
+    grid-columns: 1fr 1fr;
+    grid-rows: 1fr 1fr;
+    padding: 1;
+}
+
+/* Базовая карточка — не из конфига (серый border, полупрозрачная) */
+.mini-slot-card {
+    layout: vertical;
+    min-height: 8;
+    border: tall $surface;
+    padding: 0 1;
+}
+
+/* Карточка из конфига — активная */
+.mini-slot-card.configured {
+    border: tall $accent;
+    opacity: 1.0;
+}
+
+/* --- Карточки --- */
+.slot-card {
+    min-height: 10;
+    min-width: 10;
+    layout: vertical;
+    margin: 1;
+    border: tall $surface;
+    padding: 0 1;
+}
+
+.slot-card.configured {
+    border: tall $accent;
+    opacity: 1.0;
+}
+
+.slot-card-large {
+    height: 1fr;
+    margin: 1;
+    border: tall $surface;
+    padding: 1 2;
+    opacity: 0.4;
+}
+
+.slot-card-large.configured {
+    border: tall $accent;
+    opacity: 1.0;
+}
+
+.slot-title {
+    height: auto;
+    width: 100%;
+    min-height: 3;
+    align: center top;
+    padding: 0 1;
+    color: grey;
+    text-style: bold;
+}
+
+.slot-card.configured .slot-title,
+.slot-card-large.configured .slot-title {
+    border: tall $surface;
+    color: $accent;
+}
+
+.slot-data {
+    height: 1fr;
+    min-height: 5;
+    align: left middle;
+    border: tall $surface;
+    padding: 0 1;
+}
+
+.slot-card.configured .slot-data,
+.slot-card-large.configured .slot-data {
+    border: tall $accent;
+}
+
+/* --- Кнопки действий --- */
+.slot-actions {
+    height: auto;
+    align: center middle;
+    padding: 1 0;
+}
+
+.slot-actions Button {
+    margin: 0 1;
+    min-width: 10;
+}
+
+/* ✅ Неактивные кнопки в несконфигурированных карточках (без :not) */
+.slot-card Button,
+.slot-card-large Button {
+    opacity: 0.3;
+}
+
+/* ✅ Активные кнопки в сконфигурированных карточках (более высокий приоритет селектора) */
+.slot-card.configured Button,
+.slot-card-large.configured Button {
+    opacity: 1.0;
+}
+
+/* --- Цветовая индикация состояний --- */
+.ok {
+    color: #00ff00;
+}
+
+.warn {
+    color: #ffff00;
+}
+
+.fail {
+    color: #ff0000;
+}
+
+/* --- Footer --- */
+#bottom-bar {
+    height: 1;
+}

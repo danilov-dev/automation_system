@@ -31,108 +31,6 @@ from host.app.slot_manager import SlotManager
 # ═══════════════════════════════════════════════════════════════
 #  CSS-стили
 # ═══════════════════════════════════════════════════════════════
-APP_CSS = """
-Screen {
-    layout: vertical;
-}
-
-#top-bar {
-    height: 3;
-    background: $primary;
-    color: $text;
-    padding: 0 1;
-    align: left middle;
-}
-
-#top-bar Button {
-    margin: 0 1;
-}
-
-#counters {
-    margin-left: 2;
-    text-style: bold;
-}
-
-#main-area {
-    height: 1fr;
-    layout: horizontal;
-}
-
-#slots-column {
-    width: 40%;
-    border: solid $accent;
-    padding: 1;
-    overflow-y: auto;
-}
-
-#log-column {
-    width: 1fr;
-    border: solid $accent;
-    padding: 1;
-    layout: vertical;
-}
-
-#log-column Log {
-    height: 1fr;
-}
-
-.slot-card {
-    border: solid $secondary;
-    padding: 1;
-    margin: 1 0;
-    min-height: 12;
-}
-
-.slot-card.focused {
-    border: solid $warning;
-}
-
-.slot-title {
-    text-style: bold;
-    color: $accent;
-}
-
-.status-line {
-    margin: 0 0 0 1;
-}
-
-.status-line.ok { color: #00ff00; }
-.status-line.fail { color: #ff4444; }
-.status-line.warn { color: #ffaa00; }
-
-.slot-actions {
-    margin-top: 1;
-    align: right middle;
-}
-
-.slot-actions Button {
-    margin: 0 1;
-    min-width: 10;
-}
-
-#status-bar {
-    height: 1;
-    background: $secondary;
-    color: $text;
-    padding: 0 1;
-}
-
-#section-title {
-    text-style: bold;
-    color: $accent;
-    margin-bottom: 1;
-}
-
-#status-line {
-    color: grey;
-}
-
-.log-title {
-    text-style: bold;
-    color: $accent;
-    margin-bottom: 1;
-}
-"""
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -284,7 +182,7 @@ class SlotCard(Static):
 class AutomationTUI(App):
     """Главное TUI-приложение для стенда COM Express."""
 
-    CSS = APP_CSS
+    CSS_PATH = "app/tui/styles/style.tcss"
 
     BINDINGS = [
         Binding("q", "quit", "Quit", priority=True),
