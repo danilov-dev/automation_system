@@ -29,7 +29,7 @@ def patched_aioserial(mock_serial):
 
 async def test_start_and_stop_lifecycle(patched_aioserial):
     mock_class, mock_ser = patched_aioserial
-    ch = SerialChannel(pc_id="slot1", port="COM3")
+    ch = SerialChannel(slot_id="slot1", port="COM3")
 
     await ch.start()
     assert ch.is_alive is True
@@ -42,7 +42,7 @@ async def test_start_and_stop_lifecycle(patched_aioserial):
 
 async def test_send_puts_bytes_on_wire(patched_aioserial):
     _, mock_ser = patched_aioserial
-    ch = SerialChannel(pc_id="slot1", port="COM3")
+    ch = SerialChannel(slot_id="slot1", port="COM3")
     await ch.start()
 
     await ch.send({"type": "task", "task_id": "t1"})
@@ -57,7 +57,7 @@ async def test_send_puts_bytes_on_wire(patched_aioserial):
 
 async def test_send_after_stop_raises(patched_aioserial):
     _, _ = patched_aioserial
-    ch = SerialChannel(pc_id="slot1", port="COM3")
+    ch = SerialChannel(slot_id="slot1", port="COM3")
     await ch.start()
     await ch.stop()
 
@@ -67,7 +67,7 @@ async def test_send_after_stop_raises(patched_aioserial):
 
 async def test_incoming_ends_on_stop(patched_aioserial):
     _, _ = patched_aioserial
-    ch = SerialChannel(pc_id="slot1", port="COM3")
+    ch = SerialChannel(slot_id="slot1", port="COM3")
     await ch.start()
 
     async def stopper():
@@ -86,7 +86,7 @@ async def test_incoming_ends_on_stop(patched_aioserial):
 async def test_partial_message_reassembled_with_mock(patched_aioserial):
     """Эмуляция прихода сообщения частями (сборка буфера)."""
     _, mock_ser = patched_aioserial
-    ch = SerialChannel(pc_id="slot1", port="COM3", idle_timeout=0.2)
+    ch = SerialChannel(slot_id="slot1", port="COM3", idle_timeout=0.2)
 
     # Данные, которые будут приходить частями
     data_chunks = [

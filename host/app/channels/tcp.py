@@ -3,7 +3,7 @@ TcpChannel — транспорт поверх уже установленног
 
 В отличие от SerialChannel, здесь канал НЕ открывает сеть сам.
 TCP-сервер общий (TcpRouter), writer приходит извне через attach_writer().
-Канал — это «логическая привязка» pc_id ↔ активное соединение.
+Канал — это «логическая привязка» slot_id <--> активное соединение.
 
 Контракт Channel:
   - send()        — писать в текущий writer или ChannelDead
@@ -24,8 +24,8 @@ from host.app.utils.console_logger import ConsoleLogger, LogLevel
 class TcpChannel:
     name = "tcp"
 
-    def __init__(self, pc_id: str):
-        self.pc_id = pc_id
+    def __init__(self, slot_id: str):
+        self.slot_id = slot_id
         self._writer: Optional[asyncio.StreamWriter] = None
         self._incoming: asyncio.Queue = asyncio.Queue()
         self._started = False
@@ -34,7 +34,6 @@ class TcpChannel:
         self._last_heartbeat_time: float = 0.0
         self.heartbeat_timeout = 5
 
-    # ── lifecycle ─────────────────────────────────────────
 
     @property
     def is_alive(self) -> bool:
@@ -50,7 +49,7 @@ class TcpChannel:
             elapsed = time.monotonic() - self._last_heartbeat_time
             if elapsed > self.heartbeat_timeout:
                 ConsoleLogger.write(
-                    f"[{self.pc_id}] TCP heartbeat timeout: "
+                    f"[{self.slot_id}] TCP heartbeat timeout: "
                     f"no heartbeat for {elapsed:.0f}s",
                     LogLevel.WARNING,
                 )
@@ -59,7 +58,7 @@ class TcpChannel:
         return True
 
     async def start(self) -> None:
-        """Ничего не открывает: сервер общий, writer придёт через attach_writer."""
+        """Изменение состояния порта. Соблюдение контракта наследования"""
         self._started = True
         self._stopped = False
 
@@ -71,45 +70,40 @@ class TcpChannel:
             self._writer = None
         await self._incoming.put(None)
 
-    # ── send / incoming ───────────────────────────────────
 
     async def send(self, msg: dict) -> None:
+        """Отправить сообщение"""
         if not self.is_alive:
-            raise ChannelDead(f"[{self.pc_id}] tcp not alive")
+            raise ChannelDead(f"[{self.slot_id}] tcp not alive")
         try:
             self._writer.write(encode(msg))
             await self._writer.drain()
         except (ConnectionResetError, BrokenPipeError, OSError) as e:
             self._writer = None
-            raise ChannelDead(f"[{self.pc_id}] tcp write failed: {e}") from e
+            raise ChannelDead(f"[{self.slot_id}] tcp write failed: {e}") from e
 
     async def incoming(self) -> AsyncIterator[dict]:
+        """Итератор обработанных сообщений """
         while True:
             msg = await self._incoming.get()
             if msg is None:
                 return
             yield msg
 
-    # ── внутреннее API для TcpRouter ──────────────────────
 
     async def attach_writer(self, writer: asyncio.StreamWriter) -> None:
-        """
-        Привязать нового клиента.
-        Если был старый writer — закрыть его: PC мог переподключиться
-        (например, после падения сервиса или смены сети).
-        """
+        """Подписывает новое подключение к плате"""
         if self._writer is not None and self._writer is not writer:
             with suppress(Exception):
                 self._writer.close()
         self._writer = writer
 
     def detach(self) -> None:
-        """Отвязать текущего клиента. incoming() при этом НЕ завершается —
-        канал ждёт переподключения."""
+        """Отписывает плату от подключения. Не закрывается, а ждет переподключения"""
         self._writer = None
 
     async def push(self, msg: dict) -> None:
-        """Роутер кладёт сюда расшифрованные сообщения от клиента."""
+        """Роутер кладёт расшифрованные сообщения от клиента."""
         await self._incoming.put(msg)
 
 
@@ -124,11 +118,11 @@ class TcpChannel:
                 self._writer.write(encode(heartbeat))
                 await self._writer.drain()
                 ConsoleLogger.write(
-                    f"[{self.pc_id}] heartbeat send",
+                    f"[{self.slot_id}] heartbeat send",
                     LogLevel.INFO
                 )
         except Exception as e:
             ConsoleLogger.write(
-                f"[{self.pc_id}] heartbeat send failed: {e}",
+                f"[{self.slot_id}] heartbeat send failed: {e}",
                 LogLevel.WARNING
             )

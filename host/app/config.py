@@ -1,16 +1,5 @@
 """
 Загрузка и валидация slots.yaml.
-
-Иерархия:
-  AppConfig
-    ├── TcpConfig        (host/port/hello_timeout — общие для router)
-    └── slots: dict[str, SlotConfig]  (по одному на тестируемый ПК)
-
-SlotConfig — слот «slot1..slot4»:
-  com_log   — путь к COM1 (логи), by-id обязателен
-  com_ctrl  — путь к COM2 (управление), by-id обязателен
-  login/password — для автологина
-  tcp_ip    — опционально, ожидаемый IP клиента (пока не используется)
 """
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,7 +30,7 @@ class WsConfig:
 
 @dataclass
 class SlotConfig:
-    pc_id: str
+    slot_id: str
     com_log: str
     com_ctrl: str
     login: str = "ad"
@@ -54,13 +43,14 @@ class AppConfig:
     ws: WsConfig
     slots: dict[str, SlotConfig] = field(default_factory=dict)
 
-    def get_slot(self, pc_id: str) -> SlotConfig:
-        if pc_id not in self.slots:
-            raise ConfigError(f"slot {pc_id!r} не найден в конфиге")
-        return self.slots[pc_id]
+    def get_slot(self, slot_id: str) -> SlotConfig:
+        if slot_id not in self.slots:
+            raise ConfigError(f"slot {slot_id!r} не найден в конфиге")
+        return self.slots[slot_id]
 
 
 def load_config(path: str | Path) -> AppConfig:
+    """Инициализация настроек. Загрузка конфигурационного файла"""
     p = Path(path)
     if not p.exists():
         raise ConfigError(f"файл конфига не найден: {p}")
@@ -91,15 +81,15 @@ def load_config(path: str | Path) -> AppConfig:
         raise ConfigError("секция slots пуста или отсутствует")
 
     slots: dict[str, SlotConfig] = {}
-    for pc_id, s in slots_raw.items():
+    for slot_id, s in slots_raw.items():
         if not isinstance(s, dict):
-            raise ConfigError(f"slot {pc_id!r}: должен быть словарём")
+            raise ConfigError(f"slot {slot_id!r}: должен быть словарём")
         for req in ("com_log", "com_ctrl"):
             if not s.get(req):
-                raise ConfigError(f"slot {pc_id!r}: не задан {req}")
+                raise ConfigError(f"slot {slot_id!r}: не задан {req}")
         try:
             cfg = SlotConfig(
-                pc_id=str(pc_id),
+                slot_id=str(slot_id),
                 com_log=str(s["com_log"]),
                 com_ctrl=str(s["com_ctrl"]),
                 login=str(s.get("login", "ad")),
@@ -107,7 +97,7 @@ def load_config(path: str | Path) -> AppConfig:
                 tcp_ip=(str(s["tcp_ip"]) if s.get("tcp_ip") else None),
             )
         except TypeError as e:
-            raise ConfigError(f"slot {pc_id!r}: неверные поля ({e})") from e
-        slots[cfg.pc_id] = cfg
+            raise ConfigError(f"slot {slot_id!r}: неверные поля ({e})") from e
+        slots[cfg.slot_id] = cfg
 
     return AppConfig(ws=ws, slots=slots)

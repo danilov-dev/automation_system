@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from app.config import load_config
-from app.registry import Registry
+from app.slot_fabric import SlotFabric
 from app.channels.tcp import TcpChannel
 from app.channels.serial_channel import SerialChannel
 
@@ -26,24 +26,24 @@ def make_cfg(tmp_path, n_slots: int = 2):
 
 def test_registry_builds_all_slots(tmp_path):
     cfg = make_cfg(tmp_path, n_slots=4)
-    reg = Registry(cfg)
+    reg = SlotFabric(cfg)
     assert set(reg.all_pc_ids()) == {"slot1", "slot2", "slot3", "slot4"}
     for pc_id in reg.all_pc_ids():
         b = reg.get(pc_id)
         assert b is not None
         assert isinstance(b.tcp_channel, TcpChannel)
         assert isinstance(b.serial_channel, SerialChannel)
-        assert b.pc_session.pc_id == pc_id
+        assert b.pc_session.slot_id == pc_id
 
 
 def test_router_knows_all_channels(tmp_path):
     cfg = make_cfg(tmp_path, n_slots=3)
-    reg = Registry(cfg)
+    reg = SlotFabric(cfg)
     # внутри router._channels — приватное, но для теста ок
     assert set(reg.router._channels.keys()) == {"slot1", "slot2", "slot3"}
 
 
 def test_get_unknown_returns_none(tmp_path):
     cfg = make_cfg(tmp_path, n_slots=1)
-    reg = Registry(cfg)
+    reg = SlotFabric(cfg)
     assert reg.get("slotX") is None

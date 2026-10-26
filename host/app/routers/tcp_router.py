@@ -1,11 +1,5 @@
 """
 TcpRouter — единый TCP-сервер для всех слотов.
-Логика:
-  1. Принимает TCP-подключение.
-  2. Ждёт первый пакет {"type":"hello","pc_id":"slotN"} с таймаутом.
-  3. Ищет TcpChannel по pc_id в реестре.
-  4. attach_writer(channel, writer) → дальше все строки → channel.push().
-  5. При обрыве — channel.detach(), writer закрыт.
 """
 import asyncio
 from contextlib import suppress
@@ -30,9 +24,9 @@ class TcpRouter(BaseRouter):
 
     # ── реестр каналов ────────────────────────────────────
     def register(self, channel: TcpChannel) -> None:
-        if channel.pc_id in self._channels:
-            raise ValueError(f"pc_id '{channel.pc_id}' уже зарегистрирован")
-        self._channels[channel.pc_id] = channel
+        if channel.slot_id in self._channels:
+            raise ValueError(f"slot_id '{channel.slot_id}' уже зарегистрирован")
+        self._channels[channel.slot_id] = channel
 
     # ── lifecycle ─────────────────────────────────────────
     @property
@@ -131,18 +125,18 @@ class TcpRouter(BaseRouter):
             )
             return None
 
-        pc_id = msg.get("pc_id")
-        channel = self._channels.get(pc_id)
+        slot_id = msg.get("slot_id")
+        channel = self._channels.get(slot_id)
         if channel is None:
             ConsoleLogger.write(
-                f"[TCP] {peername}: неизвестный pc_id={pc_id!r}",
+                f"[TCP] {peername}: неизвестный slot_id={slot_id!r}",
                 LogLevel.WARNING,
             )
             return None
 
         await channel.attach_writer(writer)
         ConsoleLogger.write(
-            f"[TCP] {pc_id} подключён ({peername})",
+            f"[TCP] {slot_id} подключён ({peername})",
             LogLevel.SUCCESS,
         )
         return channel
@@ -162,9 +156,9 @@ class TcpRouter(BaseRouter):
                     await channel.push(msg)
         except (ConnectionResetError, BrokenPipeError, OSError) as e:
             ConsoleLogger.write(
-                f"[TCP] {channel.pc_id} обрыв: {e}", LogLevel.WARNING
+                f"[TCP] {channel.slot_id} обрыв: {e}", LogLevel.WARNING
             )
         finally:
             ConsoleLogger.write(
-                f"[TCP] {channel.pc_id} отключён", LogLevel.WARNING
+                f"[TCP] {channel.slot_id} отключён", LogLevel.WARNING
             )
