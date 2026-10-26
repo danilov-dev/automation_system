@@ -32,7 +32,7 @@ def test_loads_full_config(tmp_path):
     assert cfg.tcp.hello_timeout == 3.0
     assert set(cfg.slots) == {"slot1"}
     s = cfg.slots["slot1"]
-    assert s.pc_id == "slot1"
+    assert s.slot_id == "slot1"
     assert s.com_log == "/dev/ttyUSB0"
     assert s.login == "root"
     assert s.password == "secret"
@@ -83,4 +83,4 @@ def test_slot_key_becomes_pc_id(tmp_path):
     """)
     cfg = load_config(p)
     assert "myslot" in cfg.slots
-    assert cfg.slots["myslot"].pc_id == "myslot"
+    assert cfg.slots["myslot"].slot_id == "myslot"

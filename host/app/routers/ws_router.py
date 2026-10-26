@@ -29,11 +29,10 @@ class WsRouter(BaseRouter):
 
     # ── реестр каналов ────────────────────────────────────
     def register(self, channel: WsChannel) -> None:
-        if channel.pc_id in self._channels:
-            raise ValueError(f"pc_id '{channel.pc_id}' уже зарегистрирован")
-        self._channels[channel.pc_id] = channel
+        if channel.slot_id in self._channels:
+            raise ValueError(f"slot_id '{channel.slot_id}' уже зарегистрирован")
+        self._channels[channel.slot_id] = channel
 
-    # ── lifecycle ─────────────────────────────────────────
     @property
     def actual_port(self) -> int:
         if self._server is not None:
@@ -43,6 +42,7 @@ class WsRouter(BaseRouter):
         return self.port
 
     async def start(self) -> None:
+        """Создает сервер."""
         self._server = await serve(
             self._handler,
             self.host,
@@ -58,10 +58,8 @@ class WsRouter(BaseRouter):
 
     async def stop(self) -> None:
         if self._server:
-            # 1. Запрещаем принимать новые подключения
             self._server.close()
 
-            # 2. Принудительно рвем все активные TCP-соединения
             for ch in self._channels.values():
                 if ch.ws is not None:
                     try:
@@ -73,15 +71,14 @@ class WsRouter(BaseRouter):
                         pass
                     ch.ws = None
 
-            # 3. Ждем завершения хендлеров
             await self._server.wait_closed()
             self._server = None
 
         self.is_started = False
         ConsoleLogger.write("[WS] сервер остановлен", LogLevel.INFO)
 
-    # ── handler ───────────────────────────────────────────
     async def _handler(self, ws) -> None:
+        """Обработчик событий"""
         remote = ws.remote_address
         channel = None
         try:
@@ -107,12 +104,13 @@ class WsRouter(BaseRouter):
             if channel is not None:
                 channel.detach()
                 ConsoleLogger.write(
-                    f"[WS] Канал {channel.pc_id} отключен. "
+                    f"[WS] Канал {channel.slot_id} отключен. "
                     f"Ожидается повторное подключение...",
                     LogLevel.WARNING,
                 )
 
     async def _handshake(self, ws, remote) -> Optional[WsChannel]:
+        """ Рукопожатие. Возможность подключения только нужных клиентов (только платы на тесте)"""
         try:
             raw = await asyncio.wait_for(ws.recv(), timeout=self.hello_timeout)
         except asyncio.TimeoutError:
@@ -131,21 +129,22 @@ class WsRouter(BaseRouter):
             )
             return None
 
-        pc_id = msg.get("pc_id")
-        channel = self._channels.get(pc_id)
+        slot_id = msg.get("slot_id")
+        channel = self._channels.get(slot_id)
         if channel is None:
             ConsoleLogger.write(
-                f"[WS] {remote}: неизвестный pc_id={pc_id!r}", LogLevel.WARNING
+                f"[WS] {remote}: неизвестный slot_id={slot_id!r}", LogLevel.WARNING
             )
             return None
 
         await channel.attach_ws(ws)
         ConsoleLogger.write(
-            f"[WS] {pc_id} подключён ({remote})", LogLevel.SUCCESS
+            f"[WS] {slot_id} подключён ({remote})", LogLevel.SUCCESS
         )
         return channel
 
     async def _pump(self, ws, channel: WsChannel) -> None:
+        """Прослушивание канала"""
         try:
             async for raw in ws:
                 msg = decode(raw)
@@ -153,16 +152,16 @@ class WsRouter(BaseRouter):
                     await channel.push(msg)
         except websockets.ConnectionClosed as e:
             ConsoleLogger.write(
-                f"[WS] {channel.pc_id} обрыв: {e}", LogLevel.WARNING
+                f"[WS] {channel.slot_id} обрыв: {e}", LogLevel.WARNING
             )
         except asyncio.CancelledError:
             raise
         except Exception as e:
             ConsoleLogger.write(
-                f"[WS] {channel.pc_id} pump error: {type(e).__name__}: {e}",
+                f"[WS] {channel.slot_id} pump error: {type(e).__name__}: {e}",
                 LogLevel.ERROR,
             )
         finally:
             ConsoleLogger.write(
-                f"[WS] {channel.pc_id} отключён", LogLevel.WARNING
+                f"[WS] {channel.slot_id} отключён", LogLevel.WARNING
             )

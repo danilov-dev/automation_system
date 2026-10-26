@@ -1,12 +1,6 @@
 """
-LogWatcher — чтение COM1 (консоль ядра/BIOS), детект паттернов, колбэки.
+LogWatcher — чтение COM1 (консоль ядра/BIOS), выявление паттернов, колбэки.
 
-Принципиально НЕ Channel:
-  - нет JSON-протокола (COM1 — сырая консоль);
-  - нет task_id, нет send(msg: dict);
-  - много подписчиков (правил), а не один поток incoming().
-
-send_line(text) — единственная запись; нужен для автологина.
 """
 import asyncio
 import time
@@ -27,13 +21,13 @@ LineCallback = Callable[[str], Union[None, Awaitable[None]]]
 class LogWatcher:
     def __init__(
         self,
-        pc_id: str,
+        slot_id: str,
         port: str,
         baudrate: int = 115200,
         idle_timeout: float = 0.5,
         buffer_size: int = 500,
     ):
-        self.pc_id = pc_id
+        self.slot_id = slot_id
         self.port = port
         self.baudrate = baudrate
         self.idle_timeout = idle_timeout
@@ -51,8 +45,6 @@ class LogWatcher:
         self._alive = False
         self._write_lock = asyncio.Lock()
 
-    # ── lifecycle ─────────────────────────────────────────
-
     @property
     def is_alive(self) -> bool:
         return (
@@ -62,6 +54,7 @@ class LogWatcher:
         )
 
     async def start(self) -> None:
+        """Открытие порта"""
         if self._alive:
             return
         try:
@@ -70,17 +63,18 @@ class LogWatcher:
             )
         except serial.SerialException as e:
             raise RuntimeError(
-                f"[{self.pc_id}] не открыть COM1 {self.port}: {e}"
+                f"[{self.slot_id}] не открыть COM1 {self.port}: {e}"
             ) from e
         self._alive = True
         self._reader_task = asyncio.create_task(self._read_loop())
         await self._check_auth()
         ConsoleLogger.write(
-            f"[{self.pc_id}] LogWatcher {self.port} открыт @ {self.baudrate}",
+            f"[{self.slot_id}] LogWatcher {self.port} открыт @ {self.baudrate}",
             LogLevel.INFO,
         )
 
     async def stop(self) -> None:
+        """Завершение работы и закрытие порта"""
         if not self._alive and self._ser is None:
             return
         self._alive = False
@@ -104,12 +98,10 @@ class LogWatcher:
                 self._ser.close()
             self._ser = None
         ConsoleLogger.write(
-            f"[{self.pc_id}] LogWatcher {self.port} закрыт", LogLevel.INFO
+            f"[{self.slot_id}] LogWatcher {self.port} закрыт", LogLevel.INFO
         )
 
-    # ── rules ─────────────────────────────────────────────
-
-    def on(
+    def register_rule(
         self,
         patterns: list[str],
         callback: LineCallback,
@@ -120,10 +112,9 @@ class LogWatcher:
         rule_name = name or f"rule-{len(self._rules)}"
         self._rules.append((rule_name, low, callback))
 
-    # ── write (только для авторизации) ────────────────────
 
     async def send_line(self, text: str) -> None:
-        """Отправить сырую строку в COM1. Не JSON — консоль."""
+        """Отправить сырую строку."""
         if not self.is_alive:
             return
         async with self._write_lock:
@@ -134,12 +125,11 @@ class LogWatcher:
             except (serial.SerialException, OSError) as e:
                 self._alive = False
                 ConsoleLogger.write(
-                    f"[{self.pc_id}] COM1 write error: {e}", LogLevel.ERROR
+                    f"[{self.slot_id}] COM1 write error: {e}", LogLevel.ERROR
                 )
 
-    # ── read loop ─────────────────────────────────────────
-
     async def _read_loop(self) -> None:
+        """Цикл чтение из порта"""
         buffer = b""
         last_data_time = time.monotonic()
         try:
@@ -148,7 +138,7 @@ class LogWatcher:
                     waiting = self._ser.in_waiting
                 except (serial.SerialException, OSError) as e:
                     ConsoleLogger.write(
-                        f"[{self.pc_id}] COM1 потерян: {e}", LogLevel.ERROR
+                        f"[{self.slot_id}] COM1 потерян: {e}", LogLevel.ERROR
                     )
                     self._alive = False
                     break
@@ -161,6 +151,7 @@ class LogWatcher:
                         while b"\n" in buffer:
                             line, buffer = buffer.split(b"\n", 1)
                             self._dispatch(line)
+
                 else:
                     if (
                         buffer
@@ -173,16 +164,10 @@ class LogWatcher:
         except asyncio.CancelledError:
             raise
 
-    # ── dispatch ──────────────────────────────────────────
 
     def _dispatch(self, raw: bytes) -> None:
         """
         Превратить bytes в чистую строку и раздать правилам.
-
-        Колбэки запускаются как отдельные задачи (create_task), чтобы
-        медленный колбэк (запись в COM1, POST в API) не тормозил чтение.
-        Порядок вызовов при этом не гарантирован — для мониторинга
-        это приемлемо.
         """
         text = strip_ansi(
             raw.decode("utf-8", errors="backslashreplace")
@@ -204,7 +189,7 @@ class LogWatcher:
                     cb(text)
                 except Exception as e:
                     ConsoleLogger.write(
-                        f"[{self.pc_id}] rule '{name}' sync err: {e}",
+                        f"[{self.slot_id}] rule '{name}' sync err: {e}",
                         LogLevel.ERROR,
                     )
 
@@ -215,9 +200,9 @@ class LogWatcher:
             raise
         except Exception as e:
             ConsoleLogger.write(
-                f"[{self.pc_id}] rule '{name}' async err: {e}", LogLevel.ERROR
+                f"[{self.slot_id}] rule '{name}' async err: {e}", LogLevel.ERROR
             )
 
     async def _check_auth(self):
-        # if self._alive and len(self.lines) < 0:
+        """Проверка авторизации"""
         await self.send_line('\n')

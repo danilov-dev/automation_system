@@ -1,3 +1,5 @@
+"""Канал связи по протоколу Web Socket"""
+
 import asyncio
 from contextlib import suppress
 from typing import AsyncIterator, Optional
@@ -10,8 +12,8 @@ from host.app.protocol import encode
 class WsChannel:
     name = "ws"
 
-    def __init__(self, pc_id: str):
-        self.pc_id = pc_id
+    def __init__(self, slot_id: str):
+        self.slot_id = slot_id
         self._ws: Optional[ServerConnection] = None
         self._incoming: asyncio.Queue = asyncio.Queue()
         self._started = False
@@ -42,6 +44,7 @@ class WsChannel:
             self._ws = value
 
     async def start(self) -> None:
+        """Не открывает порт. Изменяет состояние. Соблюдение контракта наследования"""
         self._started = True
         self._stopped = False
 
@@ -59,28 +62,28 @@ class WsChannel:
         await self._incoming.put(None)
 
     async def send(self, msg: dict) -> None:
+        """Отправить сообщение"""
         if not self.is_alive:
-            raise ChannelDead(f"[{self.pc_id}] ws not alive")
+            raise ChannelDead(f"[{self.slot_id}] ws not alive")
         try:
             await self._ws.send(encode(msg).decode("utf-8"))
         except Exception as e:
             self._ws = None
-            raise ChannelDead(f"[{self.pc_id}] ws write failed: {e}") from e
+            raise ChannelDead(f"[{self.slot_id}] ws write failed: {e}") from e
 
     async def incoming(self) -> AsyncIterator[dict]:
+        """Итератор полученных сообщений"""
         while True:
             msg = await self._incoming.get()
             if msg is None:
                 return
             yield msg
 
-    # ── внутреннее API для WsRouter ───────────────────────
     async def attach_ws(self, ws: ServerConnection) -> None:
         """
         Подключение нового ws-соединения.
         Вызывается при каждом новом подключении клиента (включая повторные).
         """
-        # Если было старое соединение - закрываем его
         if self._ws is not None and self._ws is not ws:
             with suppress(Exception):
                 await self._ws.close()
@@ -93,7 +96,7 @@ class WsChannel:
         """
         Отключение ws-соединения (обрыв связи).
         НЕ убивает канал полностью - только обнуляет ws.
-        Pump в Slot продолжает работать и ждет повторного подключения.
+        Ждет повторного подключения.
         """
         self._ws = None
 

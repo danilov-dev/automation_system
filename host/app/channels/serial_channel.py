@@ -1,15 +1,6 @@
 """
 SerialChannel — транспорт поверх COM-порта.
 
-Протокол: line-delimited JSON (см. app/protocol.py).
-Ничего не знает про команды/отчёты — только dict in / dict out.
-
-Особенности реализации:
-  - Чтение через in_waiting + read_async: не блокируемся, если PC молчит.
-  - Буферизация до '\n': если пришёл обрывок пакета — ждём остаток.
-  - idle_timeout: если строка пришла без '\\n' и порт молчит N секунд —
-    считаем её целым сообщением (страховка от нестандартных клиентов).
-  - incoming() завершается (не висит) при stop() или ошибке порта.
 """
 import asyncio
 import time
@@ -29,12 +20,12 @@ class SerialChannel:
 
     def __init__(
         self,
-        pc_id: str,
+        slot_id: str,
         port: str,
         baudrate: int = 115200,
         idle_timeout: float = 1.0,
     ):
-        self.pc_id = pc_id
+        self.slot_id = slot_id
         self.port = port
         self.baudrate = baudrate
         self.idle_timeout = idle_timeout
@@ -55,6 +46,7 @@ class SerialChannel:
         )
 
     async def start(self) -> None:
+        """Открыть порт"""
         if self._alive:
             return
         try:
@@ -65,17 +57,18 @@ class SerialChannel:
             )
         except serial.SerialException as e:
             raise ChannelDead(
-                f"[{self.pc_id}] не открыть {self.port}: {e}"
+                f"[{self.slot_id}] не открыть {self.port}: {e}"
             ) from e
 
         self._alive = True
         self._reader_task = asyncio.create_task(self._read_loop())
         ConsoleLogger.write(
-            f"[{self.pc_id}] Serial {self.port} открыт @ {self.baudrate}",
+            f"[{self.slot_id}] Serial {self.port} открыт @ {self.baudrate}",
             LogLevel.INFO,
         )
 
     async def stop(self) -> None:
+        """Закрыть порт"""
         if not self._alive and self._ser is None:
             return
         self._alive = False
@@ -88,37 +81,36 @@ class SerialChannel:
             with suppress(Exception):
                 self._ser.close()
             self._ser = None
-        # разбудить incoming()
         await self._incoming.put(None)
         ConsoleLogger.write(
-            f"[{self.pc_id}] Serial {self.port} закрыт", LogLevel.INFO
+            f"[{self.slot_id}] Serial {self.port} закрыт", LogLevel.INFO
         )
 
-    # ── send ───────────────────────────────────────────────
 
     async def send(self, msg: dict) -> None:
+        """Отправить сообщение"""
         if not self.is_alive:
-            raise ChannelDead(f"[{self.pc_id}] serial not alive")
+            raise ChannelDead(f"[{self.slot_id}] serial not alive")
         try:
             await self._ser.write_async(encode(msg))
         except (serial.SerialException, OSError) as e:
             self._alive = False
             raise ChannelDead(
-                f"[{self.pc_id}] write failed: {e}"
+                f"[{self.slot_id}] write failed: {e}"
             ) from e
 
-    # ── incoming ───────────────────────────────────────────
 
     async def incoming(self) -> AsyncIterator[dict]:
+        """Итератор сообщений"""
         while True:
             msg = await self._incoming.get()
-            if msg is None:          # sentinel — канал закрыт
+            if msg is None:
                 return
             yield msg
 
-    # ── reader ─────────────────────────────────────────────
 
     async def _read_loop(self) -> None:
+        """Цикл чтения из порта"""
         buffer = b""
         last_data_time = time.monotonic()
         try:
@@ -127,7 +119,7 @@ class SerialChannel:
                     waiting = self._ser.in_waiting
                 except (serial.SerialException, OSError) as e:
                     ConsoleLogger.write(
-                        f"[{self.pc_id}] Serial {self.port} потерян: {e}",
+                        f"[{self.slot_id}] Serial {self.port} потерян: {e}",
                         LogLevel.ERROR,
                     )
                     self._alive = False
@@ -144,7 +136,6 @@ class SerialChannel:
                             if msg:
                                 await self._incoming.put(msg)
                 else:
-                    # порт молчит, но есть неполная строка — сбросим по idle
                     if (
                         buffer
                         and (time.monotonic() - last_data_time)
@@ -158,7 +149,6 @@ class SerialChannel:
         except asyncio.CancelledError:
             raise
         finally:
-            # если вышли из-за ошибки (не из-за stop()) — разбудить incoming()
             if not self._alive:
                 with suppress(Exception):
                     self._incoming.put_nowait(None)

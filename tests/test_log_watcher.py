@@ -45,7 +45,7 @@ async def test_line_dispatched_to_callback(pty_pair):
         seen.append(line)
         got.set()
 
-    w.on(["kernel:"], on_kernel)
+    w.register_rule(["kernel:"], on_kernel)
     await w.start()
     try:
         os.write(master, b"kernel: booting\n")
@@ -60,7 +60,7 @@ async def test_pattern_case_insensitive(pty_pair):
     w = LogWatcher("slot1", slave_name, idle_timeout=0.1)
     got = asyncio.Event()
 
-    w.on(["LOGIN:"], lambda _l: got.set())
+    w.register_rule(["LOGIN:"], lambda _l: got.set())
     await w.start()
     try:
         os.write(master, b"login: \n")
@@ -74,9 +74,9 @@ async def test_multiple_rules_all_fire(pty_pair):
     w = LogWatcher("slot1", slave_name, idle_timeout=0.1)
     hits = {"a": 0, "b": 0, "c": 0}
 
-    w.on(["systemd"], lambda _l: hits.__setitem__("a", hits["a"] + 1))
-    w.on(["starting"], lambda _l: hits.__setitem__("b", hits["b"] + 1))
-    w.on(["nope"], lambda _l: hits.__setitem__("c", hits["c"] + 1))
+    w.register_rule(["systemd"], lambda _l: hits.__setitem__("a", hits["a"] + 1))
+    w.register_rule(["starting"], lambda _l: hits.__setitem__("b", hits["b"] + 1))
+    w.register_rule(["nope"], lambda _l: hits.__setitem__("c", hits["c"] + 1))
 
     await w.start()
     try:
@@ -97,7 +97,7 @@ async def test_ansi_stripped(pty_pair):
         seen.append(line)
         got.set()
 
-    w.on(["reboot"], cb)
+    w.register_rule(["reboot"], cb)
     await w.start()
     try:
         os.write(master, b"\x1b[1;31mreboot: now\x1b[0m\n")
@@ -117,7 +117,7 @@ async def test_idle_timeout_flushes_without_newline(pty_pair):
         seen.append(line)
         got.set()
 
-    w.on(["partial"], cb)
+    w.register_rule(["partial"], cb)
     await w.start()
     try:
         os.write(master, b"partial line without newline")
@@ -235,7 +235,7 @@ async def test_stop_cancels_pending_callbacks(pty_pair):
         started.set()
         await asyncio.sleep(10)
 
-    w.on(["slow"], slow)
+    w.register_rule(["slow"], slow)
     await w.start()
     try:
         os.write(master, b"slow\n")

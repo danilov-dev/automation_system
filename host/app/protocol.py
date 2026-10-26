@@ -7,7 +7,7 @@
 
 Типы сообщений (поле "type"):
   PC -> RPi:
-    {"type": "hello",  "pc_id": "slot1"}                  # при TCP-подключении
+    {"type": "hello",  "slot_id": "slot1"}                  # при TCP-подключении
     {"type": "report", "task_id": "...", "status": "ok",
                        "command": "...", "result": {...}}  # финальный отчёт
     {"type": "report", "task_id": "...", "status": "in_progress"}

@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from app.config import load_config
-from app.registry import Registry
+from app.slot_fabric import SlotFabric
 from app.session_manager import SessionManager
 from app.protocol import encode, decode
 
@@ -66,7 +66,7 @@ async def _tcp_hello(port, pc_id):
 
 async def test_full_stack_execute_over_tcp(cfg_with_slot):
     cfg, com_log_m, com_ctrl_m = cfg_with_slot
-    reg = Registry(cfg)
+    reg = SlotFabric(cfg)
     mgr = SessionManager(reg)
     await mgr.start_all()
     try:
@@ -101,7 +101,7 @@ async def test_full_stack_execute_over_tcp(cfg_with_slot):
 async def test_fallback_to_serial_when_tcp_dead(cfg_with_slot):
     """TCP клиент не подключён — задача уходит в COM2, отвечает там."""
     cfg, com_log_m, com_ctrl_m = cfg_with_slot
-    reg = Registry(cfg)
+    reg = SlotFabric(cfg)
     mgr = SessionManager(reg)
     await mgr.start_all()
     try:
@@ -139,7 +139,7 @@ async def test_fallback_to_serial_when_tcp_dead(cfg_with_slot):
 
 async def test_reboot_in_com_log_resets_boot_automation(cfg_with_slot):
     cfg, com_log_m, com_ctrl_m = cfg_with_slot
-    reg = Registry(cfg)
+    reg = SlotFabric(cfg)
     mgr = SessionManager(reg)
 
     states: list[tuple[str, str]] = []
@@ -165,7 +165,7 @@ async def test_reboot_in_com_log_resets_boot_automation(cfg_with_slot):
 
 async def test_shutdown_in_com_log(cfg_with_slot):
     cfg, com_log_m, com_ctrl_m = cfg_with_slot
-    reg = Registry(cfg)
+    reg = SlotFabric(cfg)
     mgr = SessionManager(reg)
 
     states: list[tuple[str, str]] = []
@@ -185,7 +185,7 @@ async def test_shutdown_in_com_log(cfg_with_slot):
 
 async def test_execute_unknown_slot_raises(cfg_with_slot):
     cfg, _, _ = cfg_with_slot
-    reg = Registry(cfg)
+    reg = SlotFabric(cfg)
     mgr = SessionManager(reg)
     with pytest.raises(KeyError):
         await mgr.execute("slotX", "ping")
