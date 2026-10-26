@@ -24,7 +24,7 @@ from textual.reactive import reactive
 from textual import on
 
 from host.app.config import load_config
-from host.app.registry import Registry
+from host.app.slot_fabric import SlotFabric
 from host.app.slot_manager import SlotManager
 
 
@@ -141,7 +141,7 @@ Screen {
 class SlotCard(Static):
     """Интерактивная карточка одного слота."""
 
-    def __init__(self, pc_id: str, mgr: SlotManager, reg: Registry, app_ref):
+    def __init__(self, pc_id: str, mgr: SlotManager, reg: SlotFabric, app_ref):
         super().__init__()
         self.pc_id = pc_id
         self.mgr = mgr
@@ -303,7 +303,7 @@ class AutomationTUI(App):
         super().__init__()
         self.config_path = config_path
         self.cfg = None
-        self.reg: Registry | None = None
+        self.reg: SlotFabric | None = None
         self.mgr: SlotManager | None = None
         self.slot_cards: dict[str, SlotCard] = {}
         self.start_time: datetime | None = None
@@ -345,7 +345,7 @@ class AutomationTUI(App):
 
         try:
             self.cfg = load_config(self.config_path)
-            self.reg = Registry(self.cfg)
+            self.reg = SlotFabric(self.cfg)
             self.mgr = SlotManager(self.reg)
 
             self.mgr.on_state_change(self._on_state_change_sync)
