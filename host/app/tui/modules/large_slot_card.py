@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import logging
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, Grid
@@ -36,6 +37,10 @@ class SlotLargeCard(Widget):
         self.slot = slot
         self._paused = False
         self._v_history: list[float] = [0.0] * 40
+
+    @property
+    def logger(self):
+        return logging.getLogger(f"slot_{self.slot.slot_id}")
 
     def compose(self) -> ComposeResult:
         with Horizontal():
@@ -102,7 +107,8 @@ class SlotLargeCard(Widget):
                         yield Button("Pause", id="log-pause", variant="warning", compact=True)
                         yield Static(f"Slot: {self.slot.name}", classes="muted")
                     yield RichLog(
-                        id="log-view",
+                        id=f"log-slot-{self.slot.slot_id}",
+                        classes="slot-log-view",
                         highlight=True, markup=True, wrap=True,
                         auto_scroll=True, max_lines=1000,
                     )
@@ -162,25 +168,25 @@ class SlotLargeCard(Widget):
 
     # ---------- Логирование ----------
     def append_log(self, message: str, level: str = "INFO") -> None:
+        """Отправляем лог в стандартный логгер. Он сам уйдет в файл и в нужный RichLog."""
         if self._paused:
             return
-        colors = {"DEBUG": "dim", "INFO": "blue", "WARNING": "yellow", "ERROR": "bold red"}
-        color = colors.get(level, "white")
-        ts = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        self.query_one("#log-view", RichLog).write(
-            f"[dim]{ts}[/] [{color}]{level:<7}[/{color}] {message}"
-        )
+
+        log_method = getattr(self.logger, level.lower(), self.logger.info)
+        log_method(message)
 
     # ---------- Обработчики кнопок ----------
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id
         if button_id == "log-clear":
-            self.query_one("#log-view", RichLog).clear()
+            self.query_one(f"#log-slot-{self.slot.slot_id}", RichLog).clear()
+            self.logger.info("Button 'clear log' was pressed")
         elif button_id == "log-pause":
             self._paused = not self._paused
             event.button.label = "Resume" if self._paused else "Pause"
         elif button_id == "btn-power-single":
             self.append_log("Power toggle", "INFO")
+            self.logger.info(f"Button 'single power' was pressed")
             if self.slot.state in (SlotState.IDLE, SlotState.OFFLINE, SlotState.ERROR):
                 self.run_worker(self._power_on(), exclusive=True)
             else:
@@ -247,6 +253,6 @@ class SlotLargeCard(Widget):
         panel_id = event.item.id.replace("li-", "panel-")
         self.query_one(f"#{panel_id}").add_class("visible")
         if panel_id == "panel-logs":
-            self.query_one("#log-view", RichLog).focus()
+            self.query_one(f"#log-slot-{self.slot.slot_id}", RichLog).focus()
         elif panel_id == "panel-dashboard":
             self.update_dashboard()

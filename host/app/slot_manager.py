@@ -2,14 +2,16 @@
 SlotManager — тонкий оркестратор парка слотов.
 Отвечает за:
   - запуск/остановку роутера и всех слотов
-  - трансляцию событий от слотов внешним клиентам (ТUI, веб)
+  - трансляцию событий от слотов внешним клиентам (TUI, веб)
 """
 import asyncio
+import logging
 from typing import Awaitable, Callable, Union
 
 from host.app.slot_fabric import SlotFabric
 from host.app.slot import Slot
-from host.app.utils.console_logger import ConsoleLogger, LogLevel
+
+logger = logging.getLogger(__name__)
 
 # Колбэк о смене состояния слота: (slot_id, state_name)
 StateCallback = Callable[[str, str], Union[None, Awaitable[None]]]
@@ -32,9 +34,7 @@ class SlotManager:
                 if asyncio.iscoroutine(res):
                     await res
             except Exception as e:
-                ConsoleLogger.write(
-                    f"[SlotManager] state cb error: {e}", LogLevel.ERROR
-                )
+                logger.error(f"[SlotManager] state cb error: {e}")
 
     def on_state_change(self, cb: StateCallback) -> None:
         """Подписка для внешних клиентов."""
@@ -50,7 +50,7 @@ class SlotManager:
             try:
                 await self.registry.router.start()
             except Exception as e:
-                ConsoleLogger.write(f"[SlotManager] start error: {e}", LogLevel.ERROR)
+                logger.error(f"[SlotManager] start error: {e}")
 
     async def start_all(self):
         """Запустить роутер и все слоты."""
@@ -58,16 +58,10 @@ class SlotManager:
             return
         if not self.registry.router.is_started:
             await self.registry.router.start()
-
         for slot in self.registry.slots.values():
             await slot.start()
-
         self._started = True
-
-        ConsoleLogger.write(
-            f"[SlotManager] запущено слотов: {len(self.registry.slots)}",
-            LogLevel.SUCCESS,
-        )
+        logger.info(f"[SlotManager] slots was started: {len(self.registry.slots)}")
 
     async def stop_all(self):
         """Остановить все слоты и роутер."""
@@ -77,26 +71,23 @@ class SlotManager:
             try:
                 await slot.stop()
             except Exception as e:
-                ConsoleLogger.write(
-                    f"[SlotManager] stop slot {slot.slot_id}: {e}",
-                    LogLevel.ERROR,
-                )
+                logger.error(f"[SlotManager] stop slot {slot.slot_id}: {e}")
         await self.registry.router.stop()
         self._started = False
-        ConsoleLogger.write("[SlotManager] остановлен", LogLevel.INFO)
+        logger.info("[SlotManager] Stopped")
 
     async def start_slot(self, slot_id: str) -> None:
         """Запустить конкретный слот."""
         slot = self.registry.get(slot_id)
         if slot is None:
-            raise KeyError(f"slot {slot_id!r} не найден")
+            raise KeyError(f"slot {slot_id!r} not found")
         await slot.start()
 
     async def stop_slot(self, slot_id: str) -> None:
         """Остановить конкретный слот."""
         slot = self.registry.get(slot_id)
         if slot is None:
-            raise KeyError(f"slot {slot_id!r} не найден")
+            raise KeyError(f"slot {slot_id!r} not found")
         await slot.stop()
 
     def get_slot(self, slot_id: str) -> Slot | None:

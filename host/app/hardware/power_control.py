@@ -12,6 +12,7 @@ PowerControl — управление питанием слота.
   current()    — ток потребления (пока 0.0, потом INA219)
 """
 import asyncio
+import logging
 from typing import Optional
 
 from host.app.utils.console_logger import ConsoleLogger, LogLevel
@@ -20,9 +21,10 @@ from host.app.utils.console_logger import ConsoleLogger, LogLevel
 class PowerControl:
     """Заглушка управления питанием."""
 
-    def __init__(self, pc_id: str):
-        self.pc_id = pc_id
+    def __init__(self, slot_id: str):
+        self.pc_id = slot_id
         self._is_on = False
+        self.logger = logging.getLogger(f"slot_{slot_id}")
 
     @property
     def is_on(self) -> bool:
@@ -34,20 +36,14 @@ class PowerControl:
         # Имитация задержки включения реле
         await asyncio.sleep(0.1)
         self._is_on = True
-        ConsoleLogger.write(
-            f"[{self.pc_id}] POWER ON (stub)",
-            LogLevel.SUCCESS,
-        )
+        self.logger.info(f"POWER ON (stub)")
 
     async def power_off(self) -> None:
         if not self._is_on:
             return
         self._is_on = False
         await asyncio.sleep(0.1)
-        ConsoleLogger.write(
-            f"[{self.pc_id}] POWER OFF (stub)",
-            LogLevel.INFO,
-        )
+        self.logger.info(f"POWER OFF (stub)")
 
     async def current(self) -> float:
         """Ток потребления в амперах. Пока заглушка."""

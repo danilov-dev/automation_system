@@ -1,6 +1,7 @@
 """Канал связи по протоколу Web Socket"""
 
 import asyncio
+import logging
 from contextlib import suppress
 from typing import AsyncIterator, Optional
 from websockets.asyncio.server import ServerConnection
@@ -18,6 +19,8 @@ class WsChannel:
         self._incoming: asyncio.Queue = asyncio.Queue()
         self._started = False
         self._stopped = False
+
+        self.logger = logging.getLogger(f"slot_{slot_id}")
 
     @property
     def is_alive(self) -> bool:
@@ -47,6 +50,7 @@ class WsChannel:
         """Не открывает порт. Изменяет состояние. Соблюдение контракта наследования"""
         self._started = True
         self._stopped = False
+        self.logger.info(f"websocket channel started")
 
     async def stop(self) -> None:
         """Полная остановка канала (вызывается при stop() слота)."""
@@ -60,6 +64,7 @@ class WsChannel:
                 await self._ws.close()
             self._ws = None
         await self._incoming.put(None)
+        self.logger.info(f"websocket channel stopped")
 
     async def send(self, msg: dict) -> None:
         """Отправить сообщение"""
@@ -67,6 +72,9 @@ class WsChannel:
             raise ChannelDead(f"[{self.slot_id}] ws not alive")
         try:
             await self._ws.send(encode(msg).decode("utf-8"))
+
+            self.logger.debug(f" ws sent {msg}")
+
         except Exception as e:
             self._ws = None
             raise ChannelDead(f"[{self.slot_id}] ws write failed: {e}") from e
@@ -84,6 +92,7 @@ class WsChannel:
         Подключение нового ws-соединения.
         Вызывается при каждом новом подключении клиента (включая повторные).
         """
+        self.logger.info(f"attaching ws")
         if self._ws is not None and self._ws is not ws:
             with suppress(Exception):
                 await self._ws.close()
@@ -98,6 +107,7 @@ class WsChannel:
         НЕ убивает канал полностью - только обнуляет ws.
         Ждет повторного подключения.
         """
+        self.logger.info(f"detaching ws")
         self._ws = None
 
     async def push(self, msg: dict) -> None:
