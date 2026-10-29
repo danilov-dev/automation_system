@@ -2,24 +2,28 @@
 WsRouter — единый WebSocket-сервер для всех слотов.
 """
 import asyncio
+import logging
 from contextlib import suppress
 from typing import Dict, Optional
+
 import websockets
 from websockets.asyncio.server import Server, serve
+
 from .base_router import BaseRouter
 from host.app.channels.ws_channel import WsChannel
 from host.app.protocol import decode
-from host.app.utils.console_logger import ConsoleLogger, LogLevel
+
+logger = logging.getLogger(__name__)
 
 
 class WsRouter(BaseRouter):
     def __init__(
-        self,
-        host: str = "0.0.0.0",
-        port: int = 8765,
-        hello_timeout: float = 5.0,
-        ping_interval: float = 10.0,
-        ping_timeout: float = 10.0,
+            self,
+            host: str = "0.0.0.0",
+            port: int = 8765,
+            hello_timeout: float = 5.0,
+            ping_interval: float = 10.0,
+            ping_timeout: float = 10.0,
     ):
         super().__init__(host=host, port=port, hello_timeout=hello_timeout)
         self._channels: Dict[str, WsChannel] = {}
@@ -51,15 +55,11 @@ class WsRouter(BaseRouter):
             ping_timeout=self.ping_timeout,
         )
         self.is_started = True
-        ConsoleLogger.write(
-            f"[WS] сервер слушает ws://{self.host}:{self.actual_port}",
-            LogLevel.SUCCESS,
-        )
+        logger.info(f"[WS] server started on ws://{self.actual_port}:{self.actual_port}")
 
     async def stop(self) -> None:
         if self._server:
             self._server.close()
-
             for ch in self._channels.values():
                 if ch.ws is not None:
                     try:
@@ -70,12 +70,10 @@ class WsRouter(BaseRouter):
                     except Exception:
                         pass
                     ch.ws = None
-
             await self._server.wait_closed()
             self._server = None
-
         self.is_started = False
-        ConsoleLogger.write("[WS] сервер остановлен", LogLevel.INFO)
+        logger.info("[WS] server stopped")
 
     async def _handler(self, ws) -> None:
         """Обработчик событий"""
@@ -85,62 +83,46 @@ class WsRouter(BaseRouter):
             channel = await self._handshake(ws, remote)
             if channel is None:
                 await ws.close(1008, "bad hello")
+                logger.debug(f"[WS] {remote}: connection closed: {ws.remote_address}")
                 return
             await self._pump(ws, channel)
+            logger.debug(f"[WS] listen {channel.slot_id}")
         except asyncio.CancelledError:
-            ConsoleLogger.write(
-                f"[WS] {remote}: handler cancelled", LogLevel.WARNING
-            )
+            logger.warning(f"[WS] {remote}: handler cancelled")
             raise
         except websockets.ConnectionClosed as e:
-            ConsoleLogger.write(
-                f"[WS] {remote}: connection closed: {e}", LogLevel.INFO
-            )
+            logger.info(f"[WS] {remote}: connection closed: {e}")
         except Exception as e:
-            ConsoleLogger.write(
-                f"[WS] {remote}: {type(e).__name__}: {e}", LogLevel.ERROR
-            )
+            logger.error(f"[WS] {remote}: {type(e).__name__}: {e}")
         finally:
             if channel is not None:
                 channel.detach()
-                ConsoleLogger.write(
-                    f"[WS] Канал {channel.slot_id} отключен. "
-                    f"Ожидается повторное подключение...",
-                    LogLevel.WARNING,
-                )
+                logger.warning(f"[WS] Канал {channel.slot_id} отключен. Ожидается повторное подключение...", )
 
     async def _handshake(self, ws, remote) -> Optional[WsChannel]:
-        """ Рукопожатие. Возможность подключения только нужных клиентов (только платы на тесте)"""
+        """Рукопожатие. Возможность подключения только нужных клиентов"""
         try:
             raw = await asyncio.wait_for(ws.recv(), timeout=self.hello_timeout)
         except asyncio.TimeoutError:
-            ConsoleLogger.write(
-                f"[WS] {remote}: нет hello за {self.hello_timeout}s",
-                LogLevel.WARNING,
-            )
+            logger.warning(f"[WS] {remote}: haven't 'hello' at {self.hello_timeout}")
             return None
         except websockets.ConnectionClosed:
+            logger.debug(f"[WS] {remote}: connection closed. 'Hello' didn't arrive")
             return None
 
         msg = decode(raw)
         if not msg or msg.get("type") != "hello":
-            ConsoleLogger.write(
-                f"[WS] {remote}: первый пакет не hello", LogLevel.WARNING
-            )
+            logger.warning("[WS] %s: первый пакет не hello")
             return None
 
         slot_id = msg.get("slot_id")
         channel = self._channels.get(slot_id)
         if channel is None:
-            ConsoleLogger.write(
-                f"[WS] {remote}: неизвестный slot_id={slot_id!r}", LogLevel.WARNING
-            )
+            logger.warning(f"[WS] {remote}: unknown slot_id={slot_id}")
             return None
 
         await channel.attach_ws(ws)
-        ConsoleLogger.write(
-            f"[WS] {slot_id} подключён ({remote})", LogLevel.SUCCESS
-        )
+        logger.info(f"[WS] {slot_id} подключён ({remote})")
         return channel
 
     async def _pump(self, ws, channel: WsChannel) -> None:
@@ -151,17 +133,10 @@ class WsRouter(BaseRouter):
                 if msg is not None:
                     await channel.push(msg)
         except websockets.ConnectionClosed as e:
-            ConsoleLogger.write(
-                f"[WS] {channel.slot_id} обрыв: {e}", LogLevel.WARNING
-            )
+            logger.warning("[WS] %s обрыв: %s")
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            ConsoleLogger.write(
-                f"[WS] {channel.slot_id} pump error: {type(e).__name__}: {e}",
-                LogLevel.ERROR,
-            )
+            logger.error(f"[WS] {channel.slot_id} pump error: {type(e).__name__}: {e}")
         finally:
-            ConsoleLogger.write(
-                f"[WS] {channel.slot_id} отключён", LogLevel.WARNING
-            )
+            logger.warning(f"[WS] {channel.slot_id} disconnected")

@@ -10,9 +10,11 @@ Board — физическая плата, которая может быть в
   - может переезжать между слотами
   - хранит историю для БД
 """
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 
+logger = logging.getLogger(__name__)
 
 @dataclass
 class Board:
@@ -30,7 +32,10 @@ class Board:
         self.os = False
         self.shell = False
         self.last_seen = None
+        logger.debug(f"reset board: {self.board_id}")
+
 
     def touch(self) -> None:
         """Обновить время последнего наблюдения."""
+        logger.debug(f"refresh time on a board: {self.board_id}")
         self.last_seen = datetime.now()

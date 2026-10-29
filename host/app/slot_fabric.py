@@ -1,11 +1,13 @@
 """
 Registry — конструктор объектов на основе AppConfig.
 Собирает на каждый слот:
-  WsChannel + SerialChannel + LogWatcher + BootAutomation + PowerControl -> Slot
-  Board -> Slot.board
+WsChannel + SerialChannel + LogWatcher + BootAutomation + PowerControl -> Slot
+Board -> Slot.board
 И один общий WsRouter, в который регистрируются все WsChannel.
 НЕ запускает ничего. Старт/стоп — забота SlotManager.
 """
+import logging
+
 from host.app.board import Board
 from .routers.ws_router import WsRouter
 from .channels.ws_channel import WsChannel
@@ -14,8 +16,9 @@ from .config import AppConfig, SlotConfig
 from .log_watcher import LogWatcher
 from .boot_automation import BootAutomation
 from .slot import Slot
-from .utils.console_logger import ConsoleLogger, LogLevel
 from .hardware.power_control import PowerControl
+
+logger = logging.getLogger(__name__)
 
 
 class SlotFabric:
@@ -33,16 +36,12 @@ class SlotFabric:
         for slot_cfg in cfg.slots.values():
             self._build_slot(slot_cfg)
 
-        ConsoleLogger.write(
-            f"[Registry] собрано слотов: {len(self.slots)}",
-            LogLevel.INFO,
-        )
+        logger.info(f"[SlotFabric] собрано слотов: {len(self.slots)}")
 
     def _build_slot(self, sc: SlotConfig) -> None:
         # Создаём каналы
         ws = WsChannel(sc.slot_id)
         serial = SerialChannel(sc.slot_id, sc.com_ctrl)
-
         # Регистрируем WebSocket-канал в роутере
         self.router.register(ws)
 
@@ -63,8 +62,7 @@ class SlotFabric:
             boot_automation=boot,
             power_control=power_control,
         )
-        slot.board = board  # Привязываем плату к слоту
-
+        slot.board = board
         self.slots[sc.slot_id] = slot
 
     def get(self, slot_id: str) -> Slot | None:

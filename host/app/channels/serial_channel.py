@@ -1,9 +1,9 @@
 """
 SerialChannel — транспорт поверх COM-порта.
-
 """
 import asyncio
 import time
+import logging
 from contextlib import suppress
 from typing import AsyncIterator, Optional
 
@@ -12,7 +12,7 @@ import serial
 
 from .base import ChannelDead
 from host.app.protocol import encode, decode
-from host.app.utils.console_logger import ConsoleLogger, LogLevel
+
 
 
 class SerialChannel:
@@ -29,14 +29,14 @@ class SerialChannel:
         self.port = port
         self.baudrate = baudrate
         self.idle_timeout = idle_timeout
-
         self._ser: Optional[aioserial.AioSerial] = None
         self._alive = False
         self._reader_task: Optional[asyncio.Task] = None
         self._incoming: asyncio.Queue = asyncio.Queue()
 
-    # ── lifecycle ──────────────────────────────────────────
+        self.logger = logging.getLogger(f"slot_{slot_id}")
 
+    # ── lifecycle ──────────────────────────────────────────
     @property
     def is_alive(self) -> bool:
         return (
@@ -57,15 +57,12 @@ class SerialChannel:
             )
         except serial.SerialException as e:
             raise ChannelDead(
-                f"[{self.slot_id}] не открыть {self.port}: {e}"
+                f"не открыть {self.port}: {e}"
             ) from e
 
         self._alive = True
         self._reader_task = asyncio.create_task(self._read_loop())
-        ConsoleLogger.write(
-            f"[{self.slot_id}] Serial {self.port} открыт @ {self.baudrate}",
-            LogLevel.INFO,
-        )
+        self.logger.info(f"Port {self.port} is open")
 
     async def stop(self) -> None:
         """Закрыть порт"""
@@ -82,10 +79,7 @@ class SerialChannel:
                 self._ser.close()
             self._ser = None
         await self._incoming.put(None)
-        ConsoleLogger.write(
-            f"[{self.slot_id}] Serial {self.port} закрыт", LogLevel.INFO
-        )
-
+        self.logger.info(f"Port {self.port} is closed")
 
     async def send(self, msg: dict) -> None:
         """Отправить сообщение"""
@@ -99,7 +93,6 @@ class SerialChannel:
                 f"[{self.slot_id}] write failed: {e}"
             ) from e
 
-
     async def incoming(self) -> AsyncIterator[dict]:
         """Итератор сообщений"""
         while True:
@@ -107,7 +100,6 @@ class SerialChannel:
             if msg is None:
                 return
             yield msg
-
 
     async def _read_loop(self) -> None:
         """Цикл чтения из порта"""
@@ -118,10 +110,7 @@ class SerialChannel:
                 try:
                     waiting = self._ser.in_waiting
                 except (serial.SerialException, OSError) as e:
-                    ConsoleLogger.write(
-                        f"[{self.slot_id}] Serial {self.port} потерян: {e}",
-                        LogLevel.ERROR,
-                    )
+                    self.logger.error(f"[{self.slot_id}] read loop error: {e}")
                     self._alive = False
                     break
 
@@ -138,8 +127,7 @@ class SerialChannel:
                 else:
                     if (
                         buffer
-                        and (time.monotonic() - last_data_time)
-                        > self.idle_timeout
+                        and (time.monotonic() - last_data_time) > self.idle_timeout
                     ):
                         msg = decode(buffer)
                         if msg:
