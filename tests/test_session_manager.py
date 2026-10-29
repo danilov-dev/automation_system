@@ -6,12 +6,11 @@ import asyncio
 import os
 import pty
 import textwrap
-from pathlib import Path
 
 import pytest
 
 from app.config import load_config
-from app.slot_fabric import SlotFabric
+from slots.slot_fabric import SlotFabric
 from app.session_manager import SessionManager
 from app.protocol import encode, decode
 

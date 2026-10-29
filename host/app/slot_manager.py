@@ -8,8 +8,8 @@ import asyncio
 import logging
 from typing import Awaitable, Callable, Union
 
-from host.app.slot_fabric import SlotFabric
-from host.app.slot import Slot
+from host.app.slots.slot_fabric import SlotFabric
+from host.app.slots.slot import Slot
 
 logger = logging.getLogger(__name__)
 

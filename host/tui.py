@@ -24,7 +24,7 @@ from textual.reactive import reactive
 from textual import on
 
 from host.app.config import load_config
-from host.app.slot_fabric import SlotFabric
+from slots.slot_fabric import SlotFabric
 from host.app.slot_manager import SlotManager
 
 

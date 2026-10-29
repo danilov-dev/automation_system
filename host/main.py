@@ -3,7 +3,7 @@ import argparse
 import logging
 from pathlib import Path
 from host.app.config import load_config
-from host.app.slot_fabric import SlotFabric
+from host.app.slots.slot_fabric import SlotFabric
 from host.app.slot_manager import SlotManager
 from host.app.logger.logger import setup_logging
 

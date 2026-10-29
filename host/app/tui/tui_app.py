@@ -10,8 +10,8 @@ from textual.widgets import (
     Label, Button, TabbedContent, TabPane, Header,
 )
 
-from host.app.slot import Slot, SlotState
-from host.app.slot_fabric import SlotFabric
+from host.app.slots.slot import Slot, SlotState
+from host.app.slots.slot_fabric import SlotFabric
 from host.app.slot_manager import SlotManager
 from .modals.start_test_modal import ChooseSlotsStartModal
 from .modules.large_slot_card import SlotLargeCard
