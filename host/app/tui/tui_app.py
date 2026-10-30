@@ -107,7 +107,7 @@ class TestingApp(App):
             card.update_dashboard()
             card.push_voltage_sample(card.slot.v)
 
-    def _on_state_change(self, slot_id: str, state: str):
+    def _on_state_change(self, slot_id: str, old_state: str, new_state: str):
         """Вызывается при смене состояния слота."""
         self.call_next(self._poll)
 

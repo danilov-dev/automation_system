@@ -87,7 +87,9 @@ async def main():
         log = logging.getLogger(__name__)
         log.info("Console mode started (config=%s)", args.log_config)
         mgr.on_state_change(
-            lambda slot_id, state: log.info(">>> state %s = %s", slot_id, state)
+            lambda slot_id, old_state, new_state: log.info(
+                ">>> state %s: %s -> %s", slot_id, old_state, new_state
+            )
         )
         await mgr.start_all()
         try:

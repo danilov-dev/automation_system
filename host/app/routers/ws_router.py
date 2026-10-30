@@ -95,7 +95,7 @@ class WsRouter(BaseRouter):
         except Exception as e:
             logger.error(f"[WS] {remote}: {type(e).__name__}: {e}")
         finally:
-            if channel is not None:
+            if channel is not None and channel.ws is ws:
                 channel.detach()
                 logger.warning(f"[WS] Канал {channel.slot_id} отключен. Ожидается повторное подключение...", )
 
