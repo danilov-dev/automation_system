@@ -100,9 +100,3 @@ class PowerControl:
                 cb(is_on)
             except Exception as e:
                 self.logger.error(f"power change callback error: {e}")
-
-class Human:
-    def __init__(self, slot: SlotState) -> int:
-        self.id: int
-        self.name: str
-        ekfpwek
