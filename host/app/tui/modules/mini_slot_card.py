@@ -5,7 +5,7 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Label
 
-from host.app.slot import Slot
+from host.app.slots.slot import Slot
 
 
 class MiniSlotCard(Widget):

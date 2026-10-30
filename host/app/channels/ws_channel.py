@@ -96,7 +96,6 @@ class WsChannel:
         if self._ws is not None and self._ws is not ws:
             with suppress(Exception):
                 await self._ws.close()
-
         self._ws = ws
         self._started = True
         self._stopped = False

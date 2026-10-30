@@ -3,7 +3,7 @@ from textual.containers import Vertical, Horizontal
 from textual.screen import ModalScreen
 from textual.widgets import Label, Button, SelectionList
 
-from host.app.slot import Slot
+from host.app.slots.slot import Slot
 
 
 class ChooseSlotsStartModal(ModalScreen[tuple[list[str], list[str]]]):

@@ -1,5 +1,4 @@
 import asyncio
-import datetime
 import logging
 
 from textual.app import ComposeResult
@@ -8,7 +7,7 @@ from textual.widget import Widget
 from textual.widgets import ListView, ListItem, Label, SelectionList, Button, Static, ProgressBar, Sparkline, RichLog
 
 from .mini_slot_card import MiniSlotCard
-from host.app.slot import Slot, SlotState
+from host.app.slots.slot import Slot, SlotState
 
 
 class SlotLargeCard(Widget):

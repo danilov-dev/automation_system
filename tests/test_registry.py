@@ -1,10 +1,7 @@
 import textwrap
-from pathlib import Path
-
-import pytest
 
 from app.config import load_config
-from app.slot_fabric import SlotFabric
+from slots.slot_fabric import SlotFabric
 from app.channels.tcp import TcpChannel
 from app.channels.serial_channel import SerialChannel
 

@@ -9,14 +9,14 @@ Board -> Slot.board
 import logging
 
 from host.app.board import Board
-from .routers.ws_router import WsRouter
-from .channels.ws_channel import WsChannel
-from .channels.serial_channel import SerialChannel
-from .config import AppConfig, SlotConfig
-from .log_watcher import LogWatcher
-from .boot_automation import BootAutomation
+from host.app.routers.ws_router import WsRouter
+from host.app.channels.ws_channel import WsChannel
+from host.app.channels.serial_channel import SerialChannel
+from host.app.config import AppConfig, SlotConfig
+from host.app.log_watcher import LogWatcher
+from host.app.boot_automation import BootAutomation
 from .slot import Slot
-from .hardware.power_control import PowerControl
+from host.app.hardware.power_control import PowerControl
 
 logger = logging.getLogger(__name__)
 
