@@ -14,7 +14,7 @@ from host.app.slots.slot import Slot
 logger = logging.getLogger(__name__)
 
 # Колбэк о смене состояния слота: (slot_id, state_name)
-StateCallback = Callable[[str, str], Union[None, Awaitable[None]]]
+StateCallback = Callable[[str, str, str], Union[None, Awaitable[None]]]
 
 
 class SlotManager:
@@ -26,11 +26,11 @@ class SlotManager:
         for slot in registry.slots.values():
             slot.on_state_change(self._on_slot_state)
 
-    async def _on_slot_state(self, slot_id: str, state: str):
+    async def _on_slot_state(self, slot_id: str, old_state: str, new_state: str):
         """Вызывается при смене состояния слота. Транслирует внешним клиентам."""
         for cb in self._state_listeners:
             try:
-                res = cb(slot_id, state)
+                res = cb(slot_id, old_state, new_state)
                 if asyncio.iscoroutine(res):
                     await res
             except Exception as e:
