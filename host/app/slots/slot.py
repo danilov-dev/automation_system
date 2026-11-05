@@ -17,7 +17,7 @@ import asyncio
 import logging
 import uuid
 from contextlib import suppress
-from typing import Optional
+from typing import Optional, Callable
 
 from host.app.channels.ws_channel import WsChannel
 from host.app.channels.base import Channel, ChannelDead
@@ -48,13 +48,13 @@ class Slot:
     """
 
     def __init__(
-        self,
-        slot_id: str,
-        ws_channel: WsChannel,
-        serial_channel: SerialChannel,
-        log_watcher: LogWatcher,
-        boot_automation: BootAutomation,
-        power_control: PowerControl,
+            self,
+            slot_id: str,
+            ws_channel: WsChannel,
+            serial_channel: SerialChannel,
+            log_watcher: LogWatcher,
+            boot_automation: BootAutomation,
+            power_control: PowerControl,
     ):
         self.slot_id = slot_id
         self.ws_channel = ws_channel
@@ -170,6 +170,24 @@ class Slot:
     def board(self, value: Optional[Board]) -> None:
         self._controller.board = value
 
+    @property
+    def bios(self) -> Optional[bool]:
+        if not self._controller.board:
+            return None
+        return self._controller.board.bios
+
+    @property
+    def os(self) -> Optional[bool]:
+        if not self._controller.board:
+            return None
+        return self._controller.board.os
+
+    @property
+    def shell(self) -> Optional[bool]:
+        if not self._controller.board:
+            return None
+        return self._controller.board.shell
+
     # Метрики питания (делегирование к контроллеру)
     @property
     def v(self) -> float:
@@ -196,6 +214,25 @@ class Slot:
         """Зарегистрировать колбэк смены состояния слота."""
         self._controller.on_state_change(cb)
 
+    def on_power_state_change(self, callback: Callable[[bool], None]) -> None:
+        self.power_control.on_power_change(callback)
+
+    def on_metrics_change(self, callback: Callable) -> None:
+        """Зарегистрировать колбэк смены метрик слота."""
+        self._controller.on_metrics_change(callback)
+
+    def on_board_change(self, callback: Callable) -> None:
+        """Зарегистрировать колбэк смены состояния платы."""
+        self._controller.on_board_change(callback)
+
+    def on_channels_change(self, callback: Callable) -> None:
+        """Зарегистрировать колбэк смены живости каналов."""
+        self._controller.on_channels_change(callback)
+
+    def on_progress_change(self, callback: Callable) -> None:
+        """Зарегистрировать колбэк смены прогресса теста."""
+        self._controller.on_progress_change(callback)
+
     # ── Обработчики событий лог-вотчера ───────────────────
     async def _on_reboot_line(self, line: str) -> None:
         self._controller.on_reboot_detected()
@@ -212,11 +249,11 @@ class Slot:
     # ── Обновление метрик (делегирование) ─────────────────
     def update_metrics(self, v: float, a: float, wt: float) -> None:
         """Обновить показания датчиков питания."""
-        self._controller.update_metrics(v, a, wt)
+        self._controller.notify_update_metrics(v, a, wt)
 
     # ── РЕАКЦИЯ на смену состояния ────────────────────────
     async def _on_state_changed(
-        self, slot_id: str, old_state: str, new_state: str
+            self, slot_id: str, old_state: str, new_state: str
     ) -> None:
         """
         Реакция на смену состояния.
@@ -341,10 +378,10 @@ class Slot:
 
     # ── Публичное API: выполнение задачи ──────────────────
     async def execute(
-        self,
-        command: str,
-        params: Optional[dict] = None,
-        progress_timeout: float = 15.0,
+            self,
+            command: str,
+            params: Optional[dict] = None,
+            progress_timeout: float = 15.0,
     ) -> dict:
         """Отправить задачу и дождаться отчёта."""
         if not self.is_ready:

@@ -10,6 +10,7 @@ from typing import Awaitable, Callable, Union
 
 from host.app.slots.slot_fabric import SlotFabric
 from host.app.slots.slot import Slot
+from host.app.slots.state import SlotState
 
 logger = logging.getLogger(__name__)
 
@@ -52,43 +53,61 @@ class SlotManager:
             except Exception as e:
                 logger.error(f"[SlotManager] start error: {e}")
 
+    def are_all_slots_powered(self) -> bool:
+        turned_on_slot_count = len([slot for slot in self.registry.slots.values() if slot.power_control.is_on])
+        return turned_on_slot_count == len(self.registry.slots)
+
     async def start_all(self):
         """Запустить роутер и все слоты."""
-        if self._started:
+        if self.are_all_slots_powered():
+            self._started = True
             return
+
         if not self.registry.router.is_started:
             await self.registry.router.start()
+
         for slot in self.registry.slots.values():
-            await slot.start()
-        self._started = True
-        logger.info(f"[SlotManager] slots was started: {len(self.registry.slots)}")
+            if slot.state in (SlotState.IDLE, SlotState.OFFLINE):
+                await slot.start()
+
+        self._started = all(slot.power_control.is_on for slot in self.registry.slots.values())
+        logger.info(f"[SlotManager] slots started: {len(self.registry.slots)}")
 
     async def stop_all(self):
         """Остановить все слоты и роутер."""
-        if not self._started:
-            return
         for slot in self.registry.slots.values():
             try:
                 await slot.stop()
             except Exception as e:
                 logger.error(f"[SlotManager] stop slot {slot.slot_id}: {e}")
+
         await self.registry.router.stop()
+
         self._started = False
         logger.info("[SlotManager] Stopped")
 
     async def start_slot(self, slot_id: str) -> None:
-        """Запустить конкретный слот."""
+        """Запустить конкретный слот. Подается питание, начинается отслеживание"""
         slot = self.registry.get(slot_id)
         if slot is None:
             raise KeyError(f"slot {slot_id!r} not found")
         await slot.start()
 
     async def stop_slot(self, slot_id: str) -> None:
-        """Остановить конкретный слот."""
+        """Остановить конкретный слот. Отключает питание"""
         slot = self.registry.get(slot_id)
         if slot is None:
             raise KeyError(f"slot {slot_id!r} not found")
         await slot.stop()
+
+    async def start_test(self, slots_id: list[str], tests: list[str]) -> None:
+        """Запустить тест на выбранных слотах"""
+        pass
+
+    async def stop_test(self, slots_id: list[str]) -> None:
+        """Остановить тест на выбранных слотах"""
+        pass
+
 
     def get_slot(self, slot_id: str) -> Slot | None:
         """Получить слот по slot_id."""

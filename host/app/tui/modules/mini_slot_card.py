@@ -1,7 +1,9 @@
+from datetime import timedelta
+
 from textual.app import ComposeResult
 from textual.containers import Container, Grid, Vertical
-from textual.css.query import NoMatches
 from textual.message import Message
+from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Label
 
@@ -11,6 +13,32 @@ from host.app.slots.slot import Slot
 class MiniSlotCard(Widget):
     class IconClicked(Message):
         pass
+
+    # ── Кэш виджетов (аннотации на уровне класса) ─────
+    _lbl_bios: Label
+    _lbl_os: Label
+    _lbl_shell: Label
+    _lbl_ws: Label
+    _lbl_serial: Label
+    _lbl_v: Label
+    _lbl_a: Label
+    _lbl_wt: Label
+    _lbl_step: Label
+    _lbl_time: Label
+    _lbl_state: Label
+
+    # ── Реактивные атрибуты ───────────────────────────
+    bios = reactive(False)
+    os = reactive(False)
+    shell = reactive(False)
+    ws_alive = reactive(False)
+    serial_alive = reactive(False)
+    v = reactive(0.0)
+    a = reactive(0.0)
+    wt = reactive(0.0)
+    step = reactive(0)
+    test_time = reactive(timedelta())
+    state = reactive("IDLE")
 
     def __init__(self, slot: Slot, **kwargs):
         super().__init__(**kwargs)
@@ -40,60 +68,104 @@ class MiniSlotCard(Widget):
                 yield Container(Label(f"time:\n{self.slot.test_time}", id="test_time"), classes="cell")
             yield Label(f"STATE: {self.slot.state.name}", id="state", classes="title")
 
-    def _get_field_value(self, field_name: str):
-        """Получить значение поля из правильного места."""
-        # Датчики и состояние теста — из слота
-        if field_name in ("v", "a", "wt", "step", "test_time"):
-            return getattr(self.slot, field_name)
-        # Каналы — из слота
-        elif field_name == "ws":
-            return self.slot.ws_alive
-        elif field_name == "serial_port":
-            return self.slot.serial_alive
-        # Наблюдаемое состояние платы — из платы
-        elif field_name in ("bios", "os", "shell"):
-            board = self.slot.board
-            return getattr(board, field_name) if board else False
-        return None
+    # ── Асинхронные колбэки (единообразно) ────────────
+    async def _on_state(self, slot_id: str, old: str, new: str) -> None:
+        self.state = new
 
-    def update_field(self, field_name: str) -> None:
-        """Обновить один Label по имени поля."""
-        value = self._get_field_value(field_name)
-        if value is None:
-            return
-        try:
-            label = self.query_one(f"#{field_name}", Label)
-        except NoMatches:
-            return
+    async def _on_metrics(self, slot_id: str, v: float, a: float, wt: float) -> None:
+        self.v = v
+        self.a = a
+        self.wt = wt
 
-        if isinstance(value, bool):
-            label.update(field_name)
-            label.remove_class("enabled", "disabled")
-            label.add_class("enabled" if value else "disabled")
-        elif isinstance(value, (int, float)):
-            suffix = {"v": " V", "a": " A", "wt": " Wt"}.get(field_name, "")
-            prefix = "step: " if field_name == "step" else ""
-            label.update(f"{prefix}{value}{suffix}")
-            label.remove_class("has-value")
-            if value != 0:
-                label.add_class("has-value")
-        elif field_name == "test_time":
-            label.update(f"time:\n{value}")
+    async def _on_board(self, slot_id: str, bios: bool, os: bool, shell: bool) -> None:
+        self.bios = bios
+        self.os = os
+        self.shell = shell
 
-    def update_state(self) -> None:
-        """Обновить только STATE."""
-        try:
-            label = self.query_one("#state", Label)
-            label.update(f"STATE: {self.slot.state.name}")
-        except NoMatches:
-            pass
+    async def _on_progress(self, slot_id: str, step: int, test_time: timedelta) -> None:
+        self.step = step
+        self.test_time = test_time
 
+    async def _on_channels(self, slot_id: str, ws: bool, serial: bool, log: bool) -> None:
+        self.ws_alive = ws
+        self.serial_alive = serial
+
+    # ── Watch-методы ──────────────────────────────────
+    def watch_bios(self, value: bool) -> None:
+        self._set_bool(self._lbl_bios, "bios", value)
+
+    def watch_os(self, value: bool) -> None:
+        self._set_bool(self._lbl_os, "os", value)
+
+    def watch_shell(self, value: bool) -> None:
+        self._set_bool(self._lbl_shell, "shell", value)
+
+    def watch_ws_alive(self, value: bool) -> None:
+        self._set_bool(self._lbl_ws, "ws", value)
+
+    def watch_serial_alive(self, value: bool) -> None:
+        self._set_bool(self._lbl_serial, "serial_port", value)
+
+    def watch_v(self, value: float) -> None:
+        self._lbl_v.update(f"{round(value,3)} V")
+        self._lbl_v.set_class(value > 12.1, "disabled")
+
+    def watch_a(self, value: float) -> None:
+        self._lbl_a.update(f"{round(value,3)} A")
+        self._lbl_a.set_class(value > 0.92, "disabled")
+
+    def watch_wt(self, value: float) -> None:
+        self._lbl_wt.update(f"{round(value,3)} Wt")
+
+    def watch_step(self, value: int) -> None:
+        self._lbl_step.update(f"step: {value}")
+
+    def watch_test_time(self, value: timedelta) -> None:
+        self._lbl_time.update(f"time:\n{value}")
+
+    def watch_state(self, value: str) -> None:
+        self._lbl_state.update(f"STATE: {value}")
+
+    def _set_bool(self, label: Label, name: str, value: bool) -> None:
+        label.update(name)
+        label.remove_class("enabled", "disabled")
+        label.add_class("enabled" if value else "disabled")
+
+    # ── Fallback-обновление ───────────────────────────
     def update_all(self) -> None:
-        """Обновить все поля."""
-        for field in ("bios", "os", "ws", "shell", "serial_port",
-                      "v", "a", "wt", "step", "test_time"):
-            self.update_field(field)
-        self.update_state()
+        board = self.slot.board
+        self.bios = board.bios if board else False
+        self.os = board.os if board else False
+        self.shell = board.shell if board else False
+        self.ws_alive = self.slot.ws_alive
+        self.serial_alive = self.slot.serial_alive
+        self.v = self.slot.v
+        self.a = self.slot.a
+        self.wt = self.slot.wt
+        self.step = self.slot.step
+        self.test_time = self.slot.test_time
+        self.state = self.slot.state.name
 
     def on_mount(self) -> None:
+        # Кэшируем виджеты
+        self._lbl_bios = self.query_one("#bios", Label)
+        self._lbl_os = self.query_one("#os", Label)
+        self._lbl_shell = self.query_one("#shell", Label)
+        self._lbl_ws = self.query_one("#ws", Label)
+        self._lbl_serial = self.query_one("#serial_port", Label)
+        self._lbl_v = self.query_one("#v", Label)
+        self._lbl_a = self.query_one("#a", Label)
+        self._lbl_wt = self.query_one("#wt", Label)
+        self._lbl_step = self.query_one("#step", Label)
+        self._lbl_time = self.query_one("#test_time", Label)
+        self._lbl_state = self.query_one("#state", Label)
+
+        # Подписываемся на события слота
+        self.slot.on_state_change(self._on_state)
+        self.slot.on_metrics_change(self._on_metrics)
+        self.slot.on_board_change(self._on_board)
+        self.slot.on_progress_change(self._on_progress)
+        self.slot.on_channels_change(self._on_channels)
+
+        # Инициализация
         self.update_all()

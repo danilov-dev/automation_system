@@ -1,21 +1,20 @@
 """
 SlotMonitor — наблюдение за здоровьем слота.
 Отвечает ТОЛЬКО за наблюдение и генерацию семантических событий.
-
 Наблюдает за:
 — состоянием питания (опрашивает PowerControl.is_on)
 — живостью каналов (WS, Serial, LogWatcher)
 — успешностью логина (через BootAutomation)
 — откликом устройства через COM-порт (проба)
-
 НЕ принимает решений о состояниях напрямую.
 Вместо этого вызывает семантические методы SlotStateController:
 — on_power_lost() / on_power_restored()
 — on_fatal_error()
 — on_login_success()
-
+— on_board_alive()
 НЕ отвечает за:
 — изменение состояния слота напрямую (это SlotStateController)
+— изменение состояния платы напрямую (это SlotStateController)
 — выполнение задач (это Slot + TaskRouter)
 — перезапуск каналов (это Slot, по событию on_state_change)
 """
@@ -36,14 +35,14 @@ class SlotMonitor:
     """Наблюдение за здоровьем слота: питание, каналы, загрузка."""
 
     def __init__(
-        self,
-        slot_id: str,
-        ws_channel: WsChannel,
-        serial_channel: SerialChannel,
-        log_watcher: LogWatcher,
-        boot_automation: BootAutomation,
-        power_control: PowerControl,
-        controller: SlotStateController,
+            self,
+            slot_id: str,
+            ws_channel: WsChannel,
+            serial_channel: SerialChannel,
+            log_watcher: LogWatcher,
+            boot_automation: BootAutomation,
+            power_control: PowerControl,
+            controller: SlotStateController,
     ):
         self.slot_id = slot_id
         self.ws_channel = ws_channel
@@ -65,6 +64,9 @@ class SlotMonitor:
         if self._started:
             return
         self._started = True
+
+        self.power_control.on_metrics_change(self._on_power_metrics)
+
         self._watch_boot_task = asyncio.create_task(
             self._watch_boot(), name=f"watch-boot-{self.slot_id}"
         )
@@ -86,21 +88,24 @@ class SlotMonitor:
         self._watch_boot_task = None
         self._watch_power_and_channels_task = None
 
+    def _on_power_metrics(self, v: float, a: float, wt: float) -> None:
+        self.controller.notify_update_metrics(v, a, wt)
+
     # ── Наблюдение за загрузкой ───────────────────────────
     async def _watch_boot(self) -> None:
-        """Периодически проверяет успешность логина."""
+        """
+        Периодически проверяет успешность логина и живость платы.
+        Только наблюдает и вызывает семантические методы контроллера.
+        НЕ меняет состояние напрямую.
+        """
         was_logged = False
         while self._started:
-            # Если WS жив и плата есть — отмечаем, что BIOS/OS активны
+            # Если WS жив и плата есть — сообщаем контроллеру о живости платы.
+            # Контроллер сам решит, менять ли board.bios/os и уведомлять ли подписчиков.
             if self.ws_channel.is_alive and self.controller.board:
-                board = self.controller.board
-                if not board.bios:
-                    board.bios = True
-                    board.touch()
-                if not board.os:
-                    board.os = True
-                    board.touch()
+                self.controller.on_board_alive()
 
+            # Наблюдаем за логином
             is_logged = self.boot_automation.is_logged_in
             if is_logged and not was_logged:
                 self.controller.on_login_success()
@@ -113,14 +118,27 @@ class SlotMonitor:
         """
         Опрос питания и каналов.
         При изменении состояния питания вызывает семантические методы контроллера.
+        При изменении живости каналов сообщает контроллеру.
         При потере связи — проверяет устройство через COM.
         """
         power_was_on = self.power_control.is_on
 
+        # Кэш живости для детектирования изменений
+        prev_ws = self.ws_channel.is_alive
+        prev_serial = self.serial_channel.is_alive
+        prev_log = self.log_watcher.is_alive
+
         while self._started:
             power_is_on = self.power_control.is_on
             ws_alive = self.ws_channel.is_alive
+            serial_alive = self.serial_channel.is_alive
+            log_alive = self.log_watcher.is_alive
             state = self.controller.state
+
+            # ── Детектируем изменение живости каналов ──────
+            if (ws_alive, serial_alive, log_alive) != (prev_ws, prev_serial, prev_log):
+                self.controller.on_channels_status_changed(ws_alive, serial_alive, log_alive)
+                prev_ws, prev_serial, prev_log = ws_alive, serial_alive, log_alive
 
             # ── 1. Обрыв питания ──────────────────────────
             if power_was_on and not power_is_on:
@@ -133,7 +151,6 @@ class SlotMonitor:
             if not power_was_on and power_is_on:
                 self.controller.on_power_restored()
                 power_was_on = power_is_on
-                # Даём время Slot на перезапуск каналов
                 await asyncio.sleep(2.0)
                 continue
 
@@ -160,21 +177,10 @@ class SlotMonitor:
                         "WS lost and device unresponsive via COM"
                     )
 
-
-            # ── 4. Мы в OFFLINE, и WS снова появился ──────
-            # Но питание уже восстановлено (случай 2 выше уже вызвал on_power_restored).
-            # Здесь просто логируем, что каналы поднялись.
             elif state == SlotState.OFFLINE and ws_alive:
                 self.logger.debug(
                     "WS is up while OFFLINE. Waiting for power restore event..."
                 )
-
-            # ── 5. Защита от зависания в промежуточных состояниях ──
-            # Если мы в STARTING/CONNECTING/REBOOTING и каналы мертвы,
-            # но питание включено — не делаем ничего.
-            # Slot (оркестратор) должен перезапустить каналы по событию on_state_change.
-            # Если каналы не поднимаются долго (например, >30 сек), можно добавить таймаут.
-            # Пока оставляем как есть — даём шанс подняться.
 
             await asyncio.sleep(1.0)
 
@@ -196,8 +202,8 @@ class SlotMonitor:
 
         # Стучимся
         await self.log_watcher.send_line("\n")
-        start_time = asyncio.get_running_loop().time()
 
+        start_time = asyncio.get_running_loop().time()
         while asyncio.get_running_loop().time() - start_time < timeout:
             if self.boot_automation.is_logged_in:
                 return True

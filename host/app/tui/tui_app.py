@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical,Grid
+from textual.containers import Horizontal, Vertical, Grid
 from textual.content import Content
+from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import (
     Label, Button, TabbedContent, TabPane, Header,
@@ -34,21 +35,24 @@ class AllSlotsTab(TabPane):
         self.slots = slots
 
     def compose(self) -> ComposeResult:
+        yield TopPanel()
         with Grid(classes="slot-grid"):
             for slot in self.slots:
                 yield MiniSlotCard(slot, classes="cell")
+
 
 class TopPanel(Widget):
     def compose(self) -> ComposeResult:
         with Horizontal(classes="container"):
             with Horizontal(id="top-panel-statistic", classes="container align-left"):
                 yield Label("Statistic: ---")
-                yield Label("Active slots: ---")
+                yield Label("Active slots: ---", id="top-panel-active-slots")
                 yield Label("Errors: ---")
             with Horizontal(id="top-panel-btns", classes="container align-right"):
-                yield Button("POWER", id="btn-power-all", classes="button active", compact=True)
+                yield Button("POWER ON", id="btn-power-all", classes="button", compact=True, variant="success")
                 yield Button("START", id="start-btn", classes="button", compact=True)
                 yield Button("STOP", id="stop-btn", classes="button", compact=True)
+
 
 class MainTabWidget(Widget):
     def __init__(self, slots: list[Slot], **kwargs):
@@ -62,13 +66,18 @@ class MainTabWidget(Widget):
             for slot in self.slots:
                 yield DetailsSlotTab(slot)
 
+
 class TestingApp(App):
     CSS_PATH = "./style.tcss"
+
+    active_slots = reactive(int)
+    all_slots_powered = reactive(False, init=False)
 
     def __init__(self, registry: SlotFabric, manager: SlotManager):
         super().__init__()
         self.registry = registry
         self.manager = manager
+        self.active_slots = len(registry.slots)
         self.tests = [
             "all", "usb-benchmark", "lan-benchmark",
             "serial-benchmark", "dp-test", "stress-test",
@@ -80,36 +89,40 @@ class TestingApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header(classes="header", show_clock=True)
-        yield TopPanel()
         yield MainTabWidget(list(self.slots.values()), classes="big")
 
     def on_mount(self) -> None:
         self.title = "Automation testing stand"
+        active_slots_label = self.query_one("#top-panel-active-slots", Label)
+        active_slots_label.update(f"Active slots: {self.active_slots}")
+
         # Подписываемся на события от менеджера
         self.manager.on_state_change(self._on_state_change)
-        # Периодическое обновление (как в старом рабочем TUI)
-        self.set_interval(1.0, self._poll)
+
+        # Подписываемся на питание каждого слота
+        for slot in self.slots.values():
+            slot.on_power_state_change(self._on_any_slot_power_change)
+
+        # Первичный пересчёт
+        self._recalc_all_powered()
+
         # Запускаем бэкенд в воркере
         self.run_worker(self._start_backend(), exclusive=True)
+
 
     async def _start_backend(self):
         try:
             await self.manager.start_router()
         except Exception as e:
             self.notify(f"Backend start failed: {e}", severity="error")
-        self._poll()
-
-    def _poll(self):
-        """Периодическое обновление всех карточек."""
-        for card in self.query(MiniSlotCard):
-            card.update_all()
-        for card in self.query(SlotLargeCard):
-            card.update_dashboard()
-            card.push_voltage_sample(card.slot.v)
 
     def _on_state_change(self, slot_id: str, old_state: str, new_state: str):
         """Вызывается при смене состояния слота."""
-        self.call_next(self._poll)
+        pass
+
+    def _on_any_slot_power_change(self, is_on: bool) -> None:
+        """Любое изменение питания любого слота → пересчёт агрегата."""
+        self._recalc_all_powered()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "start-btn":
@@ -120,15 +133,13 @@ class TestingApp(App):
         elif event.button.id == "stop-btn":
             self.run_worker(self._stop_all(), exclusive=True)
         elif event.button.id == "btn-power-all":
-            if self.manager.is_started:
+            if self.all_slots_powered:
                 self.run_worker(self._stop_all(), exclusive=True)
             else:
                 self.run_worker(self._start_all(), exclusive=True)
 
     async def _start_all(self) -> None:
         try:
-            if not any(slot.state in (SlotState.IDLE, SlotState.READY, SlotState.OFFLINE) for slot in self.slots.values()):
-                return
             await self.manager.start_all()
         except Exception as e:
             self.notify(f"Backend start failed: {e}", severity="error")
@@ -138,10 +149,9 @@ class TestingApp(App):
             await self.manager.stop_all()
         except Exception as e:
             self.notify(f"Stop failed: {e}", severity="error")
-        self._poll()
 
     async def handle_slots_chosen(
-        self, selected_slots: tuple[list[str], list[str]] | None
+            self, selected_slots: tuple[list[str], list[str]] | None
     ) -> None:
         if not selected_slots or not selected_slots[0] or not selected_slots[1]:
             self.notify("Launch canceled", severity="warning")
@@ -162,7 +172,24 @@ class TestingApp(App):
                 except Exception as e:
                     self.notify(f"Failed to start {slot_id}: {e}", severity="error")
 
-        self._poll()
+    def _recalc_all_powered(self) -> None:
+        """Пересчитать, все ли слоты под питанием."""
+        self.all_slots_powered = all(
+            slot.power_control.is_on for slot in self.slots.values()
+        )
+
+    def watch_all_slots_powered(self, all_on: bool) -> None:
+        """Единственная точка, где меняется внешний вид глобальной кнопки."""
+        try:
+            btn = self.query_one("#btn-power-all", Button)
+            if all_on:
+                btn.label = "POWER OFF ALL"
+                btn.variant = "error"
+            else:
+                btn.label = "POWER ON ALL"
+                btn.variant = "success"
+        except Exception:
+            pass
 
     def action_show_slot_info(self, slot_name: str) -> None:
         self.notify(f"Slot info: {slot_name}")
