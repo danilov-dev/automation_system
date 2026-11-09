@@ -14,7 +14,7 @@ def write_tmp(tmp_path: Path, content: str) -> Path:
 
 def test_loads_full_config(tmp_path):
     p = write_tmp(tmp_path, """
-        tcp:
+        connection:
           host: 127.0.0.1
           port: 9000
           hello_timeout: 3.0

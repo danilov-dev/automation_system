@@ -1,7 +1,5 @@
 from __future__ import annotations
-
 import asyncio
-
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, Grid
 from textual.content import Content
@@ -10,10 +8,10 @@ from textual.widget import Widget
 from textual.widgets import (
     Label, Button, TabbedContent, TabPane, Header,
 )
-
 from host.app.slots.slot import Slot, SlotState
 from host.app.slots.slot_fabric import SlotFabric
 from host.app.slot_manager import SlotManager
+from host.app.testing.test_result import TestResult
 from .modals.start_test_modal import ChooseSlotsStartModal
 from .modules.large_slot_card import SlotLargeCard
 from .modules.mini_slot_card import MiniSlotCard
@@ -49,7 +47,7 @@ class TopPanel(Widget):
                 yield Label("Active slots: ---", id="top-panel-active-slots")
                 yield Label("Errors: ---")
             with Horizontal(id="top-panel-btns", classes="container align-right"):
-                yield Button("POWER ON", id="btn-power-all", classes="button", compact=True, variant="success")
+                yield Button("POWER ON ALL", id="btn-power-all", classes="button", compact=True, variant="success")
                 yield Button("START", id="start-btn", classes="button", compact=True)
                 yield Button("STOP", id="stop-btn", classes="button", compact=True)
 
@@ -69,7 +67,6 @@ class MainTabWidget(Widget):
 
 class TestingApp(App):
     CSS_PATH = "./style.tcss"
-
     active_slots = reactive(int)
     all_slots_powered = reactive(False, init=False)
 
@@ -98,6 +95,7 @@ class TestingApp(App):
 
         # Подписываемся на события от менеджера
         self.manager.on_state_change(self._on_state_change)
+        self.manager.on_test_result(self._on_test_result)
 
         # Подписываемся на питание каждого слота
         for slot in self.slots.values():
@@ -109,7 +107,6 @@ class TestingApp(App):
         # Запускаем бэкенд в воркере
         self.run_worker(self._start_backend(), exclusive=True)
 
-
     async def _start_backend(self):
         try:
             await self.manager.start_router()
@@ -119,6 +116,14 @@ class TestingApp(App):
     def _on_state_change(self, slot_id: str, old_state: str, new_state: str):
         """Вызывается при смене состояния слота."""
         pass
+
+    async def _on_test_result(self, result: TestResult) -> None:
+        """Вызывается менеджером после каждого завершённого теста."""
+        severity = "information" if result.ok else "error"
+        self.notify(
+            f"{result.slot_id}/{result.command}: {result.status}",
+            severity=severity,
+        )
 
     def _on_any_slot_power_change(self, is_on: bool) -> None:
         """Любое изменение питания любого слота → пересчёт агрегата."""
@@ -158,19 +163,13 @@ class TestingApp(App):
             return
 
         sel_slots, sel_tests = selected_slots
-        self.notify(f"Slots starting: {', '.join(sel_slots)}")
+        self.notify(f"Starting tests on {', '.join(sel_slots)}")
 
-        for slot_id in sel_slots:
-            slot = self.slots.get(slot_id)
-            if slot and slot.state in (SlotState.IDLE, SlotState.READY, SlotState.OFFLINE):
-                try:
-                    await self.manager.start_slot(slot_id)
-                    for test in sel_tests:
-                        asyncio.create_task(
-                            slot.execute(test, progress_timeout=30.0)
-                        )
-                except Exception as e:
-                    self.notify(f"Failed to start {slot_id}: {e}", severity="error")
+        # Запускаем тесты через менеджер
+        self.run_worker(
+            self.manager.run_tests(sel_slots, sel_tests),
+            exclusive=True,
+        )
 
     def _recalc_all_powered(self) -> None:
         """Пересчитать, все ли слоты под питанием."""

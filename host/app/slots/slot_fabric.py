@@ -7,7 +7,6 @@ Board -> Slot.board
 НЕ запускает ничего. Старт/стоп — забота SlotManager.
 """
 import logging
-
 from host.app.board import Board
 from host.app.routers.ws_router import WsRouter
 from host.app.channels.ws_channel import WsChannel
@@ -17,12 +16,13 @@ from host.app.log_watcher import LogWatcher
 from host.app.boot_automation import BootAutomation
 from .slot import Slot
 from host.app.hardware.power_control import PowerControl
+from host.app.testing.storage import ResultStorage, JsonlResultStorage
 
 logger = logging.getLogger(__name__)
 
 
 class SlotFabric:
-    def __init__(self, cfg: AppConfig):
+    def __init__(self, cfg: AppConfig, storage: ResultStorage | None = None):
         self.cfg = cfg
         self.router = WsRouter(
             host=cfg.ws.host,
@@ -32,16 +32,17 @@ class SlotFabric:
             ping_timeout=cfg.ws.ping_timeout,
         )
         self.slots: dict[str, Slot] = {}
+        self._storage = storage or JsonlResultStorage()
 
         for slot_cfg in cfg.slots.values():
             self._build_slot(slot_cfg)
-
         logger.info(f"[SlotFabric] собрано слотов: {len(self.slots)}")
 
     def _build_slot(self, sc: SlotConfig) -> None:
         # Создаём каналы
         ws = WsChannel(sc.slot_id)
         serial = SerialChannel(sc.slot_id, sc.com_ctrl)
+
         # Регистрируем WebSocket-канал в роутере
         self.router.register(ws)
 
@@ -50,10 +51,10 @@ class SlotFabric:
         boot = BootAutomation(watcher, sc.login, sc.password)
         power_control = PowerControl(sc.slot_id)
 
-        # Создаём плату (пока заглушка: серийник = slot_id)
+        # Создаём плату
         board = Board(board_id=sc.slot_id)
 
-        # Создаём Slot
+        # Создаём Slot с инжектированным хранилищем
         slot = Slot(
             slot_id=sc.slot_id,
             ws_channel=ws,
@@ -61,6 +62,7 @@ class SlotFabric:
             log_watcher=watcher,
             boot_automation=boot,
             power_control=power_control,
+            storage=self._storage,
         )
         slot.board = board
         self.slots[sc.slot_id] = slot

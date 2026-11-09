@@ -3,24 +3,22 @@ Slot — контроллер слота (разъёма).
 Тонкий оркестратор, отвечающий за:
 — координацию всех компонентов слота
 — lifecycle (start, stop)
-— выполнение задач (execute)
+— выполнение тестов через SlotTestRunner
 — маршрутизацию задач через TaskRouter
 — РЕАКЦИЮ на смену состояний (перезапуск каналов при STARTING, остановка при OFFLINE)
-
 НЕ отвечает за:
 — управление состоянием (это SlotStateController)
 — наблюдение за каналами и загрузкой (это SlotMonitor)
 — состояние платы как сущности (это Board)
 — оркестрацию других слотов (это SlotManager)
+— выполнение тестов (это SlotTestRunner)
 """
 import asyncio
 import logging
-import uuid
 from contextlib import suppress
 from typing import Optional, Callable
-
 from host.app.channels.ws_channel import WsChannel
-from host.app.channels.base import Channel, ChannelDead
+from host.app.channels.base import Channel
 from host.app.channels.serial_channel import SerialChannel
 from host.app.hardware.power_control import PowerControl
 from host.app.log_watcher import LogWatcher
@@ -33,28 +31,30 @@ from host.app.slots.patterns import (
     POWER_ON_PATTERNS,
     LOGIN_PROMPT_PATTERNS,
 )
-from host.app.slots.exceptions import PendingTask
 from host.app.slots.slot_router import TaskRouter
+from host.app.slots.test_runner import SlotTestRunner
 from host.app.slots.state_controller import SlotStateController
 from host.app.slots.state_monitor import SlotMonitor
+from host.app.testing.storage import ResultStorage, NullResultStorage
+from host.app.testing.test_result import TestResult
 
 
 class Slot:
     """
     Контроллер слота (разъёма).
     Тонкий оркестратор, делегирующий управление состоянием SlotStateController,
-    а наблюдение — SlotMonitor.
-    Реагирует на смену состояний через подписку on_state_change.
+    наблюдение — SlotMonitor, выполнение тестов — SlotTestRunner.
     """
 
     def __init__(
-            self,
-            slot_id: str,
-            ws_channel: WsChannel,
-            serial_channel: SerialChannel,
-            log_watcher: LogWatcher,
-            boot_automation: BootAutomation,
-            power_control: PowerControl,
+        self,
+        slot_id: str,
+        ws_channel: WsChannel,
+        serial_channel: SerialChannel,
+        log_watcher: LogWatcher,
+        boot_automation: BootAutomation,
+        power_control: PowerControl,
+        storage: Optional[ResultStorage] = None,
     ):
         self.slot_id = slot_id
         self.ws_channel = ws_channel
@@ -63,20 +63,20 @@ class Slot:
         self.boot_automation = boot_automation
         self.power_control = power_control
 
-        # Контроллер состояния (владеет состоянием, платой и метриками)
+        # Контроллер состояния
         self._controller = SlotStateController(
             slot_id=slot_id,
             boot_automation=boot_automation,
         )
 
-        # Монитор (только наблюдает)
+        # Монитор
         self._monitor = SlotMonitor(
             slot_id=slot_id,
             ws_channel=ws_channel,
             serial_channel=serial_channel,
             log_watcher=log_watcher,
             boot_automation=boot_automation,
-            power_control=power_control,  # Передаём power_control в монитор
+            power_control=power_control,
             controller=self._controller,
         )
 
@@ -85,18 +85,25 @@ class Slot:
             slot_id=slot_id,
             channels=self.channels,
             set_offline=lambda reason: self._controller.on_fatal_error(reason),
+            pending_provider=lambda: self._tests.pending,
         )
 
-        # Ожидающие задачи
-        self._pending: dict[str, PendingTask] = {}
-        self._pumps: list[asyncio.Task] = []
+        # Раннер тестов
+        self._tests = SlotTestRunner(
+            slot_id=slot_id,
+            router=self._router,
+            controller=self._controller,
+            storage=storage or NullResultStorage(),
+            progress_timeout=30.0,
+        )
+
         self._started = False
         self.logger = logging.getLogger(f"slot_{slot_id}")
 
-        # Подписка на события лог-вотчера (парсинг паттернов)
+        # Подписка на события лог-вотчера
         self._register_log_watcher_rules()
 
-        # Подписка на смену состояния — РЕАКЦИЯ на состояния
+        # Подписка на смену состояния
         self._controller.on_state_change(self._on_state_changed)
 
     def _register_log_watcher_rules(self) -> None:
@@ -116,10 +123,9 @@ class Slot:
             name=f"loginprompt-{self.slot_id}",
         )
 
-    # ── Свойства (делегирование к контроллеру) ────────────
+    # ── Свойства ────────────────────────────────────────
     @property
     def name(self) -> str:
-        """Алиас для совместимости с TUI."""
         return self.slot_id
 
     @property
@@ -136,7 +142,7 @@ class Slot:
 
     @property
     def is_testing(self) -> bool:
-        return self._controller.is_testing
+        return self._tests.is_busy
 
     @property
     def last_error(self) -> Optional[str]:
@@ -172,23 +178,16 @@ class Slot:
 
     @property
     def bios(self) -> Optional[bool]:
-        if not self._controller.board:
-            return None
-        return self._controller.board.bios
+        return self._controller.board.bios if self._controller.board else None
 
     @property
     def os(self) -> Optional[bool]:
-        if not self._controller.board:
-            return None
-        return self._controller.board.os
+        return self._controller.board.os if self._controller.board else None
 
     @property
     def shell(self) -> Optional[bool]:
-        if not self._controller.board:
-            return None
-        return self._controller.board.shell
+        return self._controller.board.shell if self._controller.board else None
 
-    # Метрики питания (делегирование к контроллеру)
     @property
     def v(self) -> float:
         return self._controller.v
@@ -209,31 +208,34 @@ class Slot:
     def test_time(self):
         return self._controller.test_time
 
-    # ── Подписка на смену состояния (делегирование) ───────
+    @property
+    def current_test(self) -> Optional[str]:
+        return self._tests.current_command
+
+    # ── Подписка на события ─────────────────────────────
     def on_state_change(self, cb) -> None:
-        """Зарегистрировать колбэк смены состояния слота."""
         self._controller.on_state_change(cb)
 
     def on_power_state_change(self, callback: Callable[[bool], None]) -> None:
         self.power_control.on_power_change(callback)
 
     def on_metrics_change(self, callback: Callable) -> None:
-        """Зарегистрировать колбэк смены метрик слота."""
         self._controller.on_metrics_change(callback)
 
     def on_board_change(self, callback: Callable) -> None:
-        """Зарегистрировать колбэк смены состояния платы."""
         self._controller.on_board_change(callback)
 
     def on_channels_change(self, callback: Callable) -> None:
-        """Зарегистрировать колбэк смены живости каналов."""
         self._controller.on_channels_change(callback)
 
     def on_progress_change(self, callback: Callable) -> None:
-        """Зарегистрировать колбэк смены прогресса теста."""
         self._controller.on_progress_change(callback)
 
-    # ── Обработчики событий лог-вотчера ───────────────────
+    def on_test_result(self, cb) -> None:
+        """Подписка на завершение теста."""
+        self._tests.on_result(cb)
+
+    # ── Обработчики событий лог-вотчера ─────────────────
     async def _on_reboot_line(self, line: str) -> None:
         self._controller.on_reboot_detected()
 
@@ -246,86 +248,56 @@ class Slot:
     async def _on_login_prompt_line(self, line: str) -> None:
         self._controller.on_login_prompt_detected()
 
-    # ── Обновление метрик (делегирование) ─────────────────
+    # ── Обновление метрик ───────────────────────────────
     def update_metrics(self, v: float, a: float, wt: float) -> None:
-        """Обновить показания датчиков питания."""
         self._controller.notify_update_metrics(v, a, wt)
 
-    # ── РЕАКЦИЯ на смену состояния ────────────────────────
+    # ── РЕАКЦИЯ на смену состояния ──────────────────────
     async def _on_state_changed(
-            self, slot_id: str, old_state: str, new_state: str
+        self, slot_id: str, old_state: str, new_state: str
     ) -> None:
-        """
-        Реакция на смену состояния.
-        Оркестрация компонентов в зависимости от нового состояния.
-        """
         self.logger.debug(f"State changed: {old_state} -> {new_state}")
 
-        # Если перешли в STARTING (первый запуск или восстановление после OFFLINE)
         if new_state == SlotState.STARTING.name:
-            # Если каналы мертвы (например, после обрыва питания), перезапускаем их
             if not self.ws_channel.is_alive or not self.serial_channel.is_alive:
-                self.logger.info(
-                    "State is STARTING. Restarting channels..."
-                )
+                self.logger.info("State is STARTING. Restarting channels...")
                 await self._restart_channels()
 
-        # Если перешли в OFFLINE, останавливаем каналы, чтобы не жгли ресурсы
         elif new_state == SlotState.OFFLINE.name:
             self.logger.info("State is OFFLINE. Stopping channels...")
+            self._tests.abort("slot went offline")
             await self._stop_channels()
 
-        # Если перешли в IDLE (после stop), ничего не делаем
+        elif new_state == SlotState.ERROR.name:
+            self._tests.abort(f"slot error: {self.last_error}")
+
         elif new_state == SlotState.IDLE.name:
             self.logger.debug("State is IDLE. Slot is idle.")
 
     async def _restart_channels(self) -> None:
         """Безопасный перезапуск всех каналов."""
-        # Сначала останавливаем, если что-то осталось
         await self._stop_channels()
-
         try:
-            # Запускаем каналы
             try:
                 await self.ws_channel.start()
             except Exception as e:
                 self.logger.warning(f"WS channel failed to start: {e}")
-
             try:
                 await self.serial_channel.start()
             except Exception as e:
                 self.logger.warning(f"Serial channel failed to start: {e}")
-
             await self.log_watcher.start()
 
-            # Запускаем насосы для чтения отчётов
-            self._pumps = [
-                asyncio.create_task(
-                    self._router.pump(ch, self._pending),
-                    name=f"pump-{self.slot_id}-{ch.name}",
-                )
-                for ch in self.channels
-            ]
-
-            # Сообщаем контроллеру, что каналы подняты
+            self._router.start_pumps()
             self._controller.on_channels_established()
             self.logger.info("Channels restarted successfully")
-
         except Exception as e:
             self.logger.error(f"Failed to restart channels: {e}")
             self._controller.on_fatal_error(f"Failed to restart channels: {e}")
 
     async def _stop_channels(self) -> None:
         """Остановка всех каналов."""
-        # Отменяем насосы
-        for t in self._pumps:
-            t.cancel()
-        for t in self._pumps:
-            with suppress(asyncio.CancelledError):
-                await t
-        self._pumps.clear()
-
-        # Останавливаем каналы в обратном порядке
+        await self._router.stop_pumps()
         with suppress(Exception):
             await self.log_watcher.stop()
         with suppress(Exception):
@@ -334,7 +306,7 @@ class Slot:
         with suppress(Exception):
             await self.ws_channel.stop()
 
-    # ── Lifecycle ─────────────────────────────────────────
+    # ── Lifecycle ───────────────────────────────────────
     async def start(self) -> None:
         if self._started:
             return
@@ -345,6 +317,7 @@ class Slot:
             self._controller.on_fatal_error(f"The slot '{self.slot_id}' did not receive power.")
             self._started = False
             raise Exception(f"The slot '{self.slot_id}' did not receive power.")
+        self._router.start_pumps()
         await self._monitor.start()
 
     async def stop(self) -> None:
@@ -352,70 +325,41 @@ class Slot:
         if not self._started:
             return
         self._started = False
-
-        # Останавливаем мониторинг
+        self._tests.abort(f"[{self.slot_id}] slot stopped")
         await self._monitor.stop()
-
-        # Разбудить все ожидающие задачи
-        for record in list(self._pending.values()):
-            if not record.final.done():
-                record.final.set_exception(
-                    ChannelDead(f"[{self.slot_id}] slot stopped")
-                )
-        self._pending.clear()
-        self.logger.debug("pending task list is clear")
-
-        # Останавливаем каналы
         await self._stop_channels()
-
-        # Снимаем питание
         await self.power_control.power_off()
-
-        # Сообщаем контроллеру, что слот остановлен
         self._controller.on_slot_stopped()
-
         self.logger.info("Slot stopped")
 
-    # ── Публичное API: выполнение задачи ──────────────────
+    # ── Публичное API: тесты ────────────────────────────
+    async def run_tests(
+        self,
+        commands: list[str],
+        params: Optional[dict] = None,
+        stop_on_error: bool = True,
+    ) -> list[TestResult]:
+        """Выполнить набор тестов на этом слоте."""
+        return await self._tests.run_suite(commands, params, stop_on_error)
+
     async def execute(
-            self,
-            command: str,
-            params: Optional[dict] = None,
-            progress_timeout: float = 15.0,
-    ) -> dict:
-        """Отправить задачу и дождаться отчёта."""
-        if not self.is_ready:
-            raise RuntimeError(
-                f"Slot {self.slot_id} is not ready (state: {self._controller.state.name})"
-            )
+        self,
+        command: str,
+        params: Optional[dict] = None,
+        progress_timeout: Optional[float] = None,
+    ) -> TestResult:
+        """Выполнить один тест."""
+        return await self._tests.run_one(command, params, progress_timeout)
 
-        task_id = uuid.uuid4().hex[:8]
-        payload = {
-            "type": "task",
-            "task_id": task_id,
-            "command": command,
-            "params": params or {},
-        }
+    def cancel_tests(self) -> None:
+        """Отменить текущую сессию тестов."""
+        self._tests.cancel()
 
-        record = PendingTask(task_id, progress_timeout)
-        self._pending[task_id] = record
+    def get_history(self) -> list[TestResult]:
+        """Получить историю результатов тестов."""
+        return list(self._tests._storage.load(self.slot_id))
 
-        # Сообщаем контроллеру, что задача началась
-        self._controller.on_task_started()
-
-        try:
-            report = await self._router.route(payload, record)
-            self._controller.apply_report(report)
-            return report
-        except Exception as e:
-            self._controller.on_fatal_error(str(e))
-            raise
-        finally:
-            self._pending.pop(task_id, None)
-            if self._controller.state == SlotState.TESTING:
-                self._controller.on_task_finished()
-
-    # ── Информация для UI ─────────────────────────────────
+    # ── Информация для UI ───────────────────────────────
     def get_status_dict(self) -> dict:
         return self._controller.get_status_dict(
             ws_alive=self.ws_alive,
