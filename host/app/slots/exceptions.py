@@ -15,7 +15,7 @@ class ChannelDead(Exception):
 
 
 class AllChannelsFailed(Exception):
-    """Все каналы слота исчерпаны (фейловер не помог)."""
+
     def __init__(self, slot_id: str, task_id: str, tried: list[str], last_err: Optional[Exception]):
         self.slot_id = slot_id
         self.task_id = task_id
@@ -29,13 +29,20 @@ class AllChannelsFailed(Exception):
 
 class PendingTask:
     """
-    Ожидающая задача: хранит Future для финального отчёта и Event для продления таймаута.
+    Ожидающая задача: хранит Future для финального отчёта и Event для продления тайм-аута.
+    ВНИМАНИЕ! Для создания экземпляра класса требуется запущенный event loop!
+
+    Args:
+        task_id (str): ID задачи
+        progress_timeout (float | int): Тайм-аут ожидания
+        on_progress (Optional[Callable[[dict], None]]): Callback функция для продления ожидания
     """
+
     def __init__(
-        self,
-        task_id: str,
-        progress_timeout: float,
-        on_progress: Optional[Callable[[dict], None]] = None,
+            self,
+            task_id: str,
+            progress_timeout: float,
+            on_progress: Optional[Callable[[dict], None]] = None,
     ):
         self.task_id = task_id
         self.progress_timeout = progress_timeout
@@ -46,9 +53,12 @@ class PendingTask:
 
     def on_report(self, msg: dict) -> None:
         """
-        Обработать входящий отчёт.
-        - in_progress: продлевает таймаут и вызывает on_progress
-        - success/error: завершает задачу
+        Обрабатывает входящий отчет
+        Args:
+            msg (dict[Any, Any]): Отчет в виде словаря
+
+        Returns: None
+
         """
         try:
             report = Report.from_dict(msg)

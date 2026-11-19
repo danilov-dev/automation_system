@@ -1,20 +1,3 @@
-"""
-SlotTestRunner — сессия тестирования одного слота.
-
-Отвечает за:
-— очередь и последовательное выполнение тестов на этом слоте
-— владение pending-задачами (dict[task_id, PendingTask])
-— тайм-ауты прогресса, отмену сессии
-— сбор TestResult, сохранение через ResultStorage
-— уведомление контроллера состояния о ходе сессии
-— уведомление подписчиков о результатах
-
-НЕ отвечает за:
-— транспорт и фейловер (это TaskRouter)
-— матрицу переходов состояния (это SlotStateController)
-— lifecycle слота (это Slot)
-— другие слоты (это SlotManager)
-"""
 import asyncio
 import logging
 import uuid
@@ -31,21 +14,41 @@ ResultCallback = Callable[[TestResult], Union[None, Awaitable[None]]]
 
 
 class SlotTestRunner:
+    """
+    Сессия тестирования слота.
+
+    Отвечает за:
+    — очередь и последовательное выполнение тестов на этом слоте
+    — владение ожидаемыми задачами (dict[task_id, PendingTask])
+    — тайм-ауты прогресса, отмену сессии
+    — сбор результатов тестов, сохранение через ResultStorage (хранилище)
+    — уведомление контроллера состояния о ходе сессии
+    — уведомление подписчиков о результатах
+
+    Args:
+        slot_id (str): ID слота
+        router (TaskRouter): Роутер задач
+        controller (SlotStateController): Контроллер состояния слота
+        result_storage (Optional[ResultStorage]): Хранилище результатов
+        progress_timeout (float | int): Тайм-аут ожидания прогресса
+    """
+
     def __init__(
-        self,
-        slot_id: str,
-        router: TaskRouter,
-        controller: SlotStateController,
-        storage: Optional[ResultStorage] = None,
-        progress_timeout: float = 30.0,
+            self,
+            slot_id: str,
+            router: TaskRouter,
+            controller: SlotStateController,
+            result_storage: Optional[ResultStorage] = None,
+            progress_timeout: float = 30.0,
     ):
+
         self.slot_id = slot_id
         self._router = router
         self._controller = controller
-        self._storage = storage or NullResultStorage()
+        self._result_storage = result_storage or NullResultStorage()
         self.progress_timeout = progress_timeout
 
-        self._pending: dict[str, PendingTask] = {}
+        self._pending_tasks: dict[str, PendingTask] = {}
         self._lock = asyncio.Lock()
         self._session_task: Optional[asyncio.Task] = None
         self._cancel_requested = False
@@ -57,7 +60,7 @@ class SlotTestRunner:
     @property
     def pending(self) -> dict[str, PendingTask]:
         """Отдаётся роутеру для pump()."""
-        return self._pending
+        return self._pending_tasks
 
     @property
     def is_busy(self) -> bool:
@@ -73,24 +76,39 @@ class SlotTestRunner:
 
     # ── Публичное API ───────────────────────────────────
     async def run_one(
-        self,
-        command: str,
-        params: Optional[dict] = None,
-        progress_timeout: Optional[float] = None,
+            self,
+            command: str,
+            params: Optional[dict] = None,
+            progress_timeout: Optional[float] = None,
     ) -> TestResult:
-        """Выполнить один тест. Сериализуется через lock."""
+        """
+        Выполнить один тест. Сериализуется через lock.
+        Args:
+            command (str): Название команды
+            params (Optional[dict]): Параметры в виде словаря
+            progress_timeout (Optional[float]): Тайм-аут ожидания результата
+
+        Returns:
+            TestResult
+        """
         async with self._lock:
             return await self._execute(command, params or {}, progress_timeout)
 
     async def run_suite(
-        self,
-        commands: list[str],
-        params: Optional[dict] = None,
-        stop_on_error: bool = True,
+            self,
+            commands: list[str],
+            params: Optional[dict] = None,
+            stop_on_error: bool = True,
     ) -> list[TestResult]:
         """
-        Выполнить набор тестов последовательно.
-        Сессия целиком держит lock — никто не влезет между тестами.
+        Выполнить набор тестов последовательно. Сериализуется через lock.
+        Args:
+            commands (list[str]): Список названий команд
+            params (Optional[dict]): Параметры в виде словаря
+            stop_on_error (bool): Тайм-аут ожидания результата
+
+        Returns:
+            list[TestResult]
         """
         results: list[TestResult] = []
         self._cancel_requested = False
@@ -128,7 +146,7 @@ class SlotTestRunner:
     def cancel(self) -> None:
         """Запросить отмену сессии. Текущий тест будет прерван."""
         self._cancel_requested = True
-        for record in list(self._pending.values()):
+        for record in list(self._pending_tasks.values()):
             if not record.final.done():
                 record.final.set_exception(
                     asyncio.CancelledError(f"[{self.slot_id}] test session cancelled")
@@ -137,22 +155,31 @@ class SlotTestRunner:
     def abort(self, reason: str) -> None:
         """
         Аварийный сброс: слот остановлен / питание пропало.
-        Будит все ожидающие задачи, чистит pending.
+        Будит все ожидающие задачи, чистит список ожидаемых задач.
         """
         self._cancel_requested = True
-        for record in list(self._pending.values()):
+        for record in list(self._pending_tasks.values()):
             if not record.final.done():
                 record.final.set_exception(RuntimeError(reason))
-        self._pending.clear()
+        self._pending_tasks.clear()
         self._current_command = None
 
-    # ── Внутреннее ──────────────────────────────────────
     async def _execute(
-        self,
-        command: str,
-        params: dict,
-        progress_timeout: Optional[float],
+            self,
+            command: str,
+            params: dict,
+            progress_timeout: Optional[float],
     ) -> TestResult:
+        """
+        Внутренний метод выполнения тестов. Присваивает id задаче0
+        Args:
+            command ():
+            params ():
+            progress_timeout ():
+
+        Returns:
+
+        """
         task_id = uuid.uuid4().hex[:8]
         result = TestResult(
             slot_id=self.slot_id,
@@ -168,7 +195,7 @@ class SlotTestRunner:
             progress_timeout or self.progress_timeout,
             on_progress=lambda msg: self._controller.apply_progress(msg),
         )
-        self._pending[task_id] = record
+        self._pending_tasks[task_id] = record
         self._controller.on_task_started(command)
 
         payload = {
@@ -194,7 +221,7 @@ class SlotTestRunner:
         except asyncio.CancelledError:
             result.status = "cancelled"
             result.error = "cancelled"
-            raise_ = False  # сессия отменена — не роняем слот
+            raise_ = False
 
         except Exception as e:
             result.status = "error"
@@ -204,10 +231,10 @@ class SlotTestRunner:
 
         finally:
             result.finished_at = datetime.now()
-            self._pending.pop(task_id, None)
+            self._pending_tasks.pop(task_id, None)
             self._current_command = None
             self._controller.on_task_finished()
-            self._storage.save(result)
+            self._result_storage.save(result)
             await self._emit_result(result)
             self.logger.info(
                 f"[runner] {command} ({task_id}) -> {result.status} "
@@ -224,7 +251,7 @@ class SlotTestRunner:
             error=reason,
             finished_at=datetime.now(),
         )
-        self._storage.save(r)
+        self._result_storage.save(r)
         return r
 
     async def _emit_result(self, result: TestResult) -> None:

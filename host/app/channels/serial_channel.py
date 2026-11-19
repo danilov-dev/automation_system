@@ -5,6 +5,7 @@ import asyncio
 import time
 import logging
 from contextlib import suppress
+from datetime import datetime
 from typing import AsyncIterator, Optional
 
 import aioserial
@@ -62,6 +63,7 @@ class SerialChannel:
 
         self._alive = True
         self._reader_task = asyncio.create_task(self._read_loop())
+
         self.logger.info(f"Port {self.port} is open")
 
     async def stop(self) -> None:
@@ -140,3 +142,14 @@ class SerialChannel:
             if not self._alive:
                 with suppress(Exception):
                     self._incoming.put_nowait(None)
+
+    async def send_heartbeat(self):
+        """Отправить heartbeat клиенту."""
+        if not self.is_alive:
+            return
+        try:
+            heartbeat = {"type": "heartbeat", "timestamp": datetime.now().isoformat()}
+            await self.send(heartbeat)
+            self.logger.info("heartbeat send")
+        except Exception as e:
+            self.logger.error(f"heartbeat send failed: {e}")

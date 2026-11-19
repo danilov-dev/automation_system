@@ -93,7 +93,7 @@ class Slot:
             slot_id=slot_id,
             router=self._router,
             controller=self._controller,
-            storage=storage or NullResultStorage(),
+            result_storage=storage or NullResultStorage(),
             progress_timeout=30.0,
         )
 
@@ -357,7 +357,7 @@ class Slot:
 
     def get_history(self) -> list[TestResult]:
         """Получить историю результатов тестов."""
-        return list(self._tests._storage.load(self.slot_id))
+        return list(self._tests._result_storage.load(self.slot_id))
 
     # ── Информация для UI ───────────────────────────────
     def get_status_dict(self) -> dict:
