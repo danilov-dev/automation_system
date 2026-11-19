@@ -50,6 +50,9 @@ class SlotLargeCard(Widget):
 
     _power_btn: Button
 
+    _test_log: RichLog
+    _step_log: RichLog
+
     # ── Реактивные атрибуты ───────────────────────────────
     voltage = reactive(0.0)
     current = reactive(0.0)
@@ -155,8 +158,8 @@ class SlotLargeCard(Widget):
                         yield Static("Elapsed: 00:00:00", id="dash-elapsed")
 
                     with Horizontal(classes="btn-panel"):
-                        yield Button("START", classes="btn", variant="success")
-                        yield Button("STOP", classes="btn", variant="error")
+                        yield Button("START", id="btn-start", classes="btn", variant="success")
+                        yield Button("STOP", id="btn-stop", classes="btn", variant="error")
 
                 # --- DASHBOARD ---
                 with Vertical(id="panel-dashboard", classes="panel container"):
@@ -213,6 +216,7 @@ class SlotLargeCard(Widget):
     async def _on_progress(self, slot_id: str, step: int, test_time: timedelta) -> None:
         self.step = step
         self._elapsed.update(f"Elapsed: {test_time}")
+        self._log_step(step, test_time)
 
     async def _on_channels(self, slot_id: str, ws: bool, serial: bool, log: bool) -> None:
         self.ws_alive = ws
@@ -307,6 +311,12 @@ class SlotLargeCard(Widget):
         elif button_id == "log-pause":
             self._paused = not self._paused
             event.button.label = "Resume" if self._paused else "Pause"
+        elif button_id == "btn-start":
+            self.append_log("Test start", "INFO")
+            self.run_worker(self._start_tests(), exclusive=True)
+        elif button_id == "btn-stop":
+            self.append_log("Stop tests", "WARNING")
+            self.run_worker(self._stop_tests(), exclusive=True)
         elif button_id == "btn-power-single":
             self.append_log("Power toggle", "INFO")
             self.logger.info("Button 'single power' was pressed")
@@ -353,8 +363,25 @@ class SlotLargeCard(Widget):
             selected_tests = list(tests_list.selected)
         except Exception:
             selected_tests = self.tests[:1]
-        for test in selected_tests:
-            asyncio.create_task(self.slot.execute(test, progress_timeout=30.0))
+
+        if not selected_tests:
+            self.append_log("No tests selected.", "WARNING")
+            return
+
+        # Чистим логи перед запуском
+        self._test_log.clear()
+        self._step_log.clear()
+        self._test_log.write(f"Suite: {', '.join(selected_tests)}")
+
+        # Слот сам управляет очередью, состоянием и сохранением
+        results = await self.slot.run_tests(selected_tests, stop_on_error=False)
+
+        passed = sum(1 for r in results if r.ok)
+        self._test_log.write(f"Suite finished: {passed}/{len(results)} passed")
+
+    async def _stop_tests(self):
+        self.append_log("Cancelling tests...", "WARNING")
+        self.slot.cancel_tests()
 
     async def _reboot(self):
         try:
@@ -363,6 +390,19 @@ class SlotLargeCard(Widget):
             await self.slot.power_control.power_on()
         except Exception as e:
             self.append_log(f"Reboot failed: {e}", "ERROR")
+
+    async def _on_test_result(self, result) -> None:
+        """Вызывается слотом после завершения каждого теста."""
+        icon = "✓" if result.ok else "✗"
+        self._test_log.write(
+            f"[{icon}] {result.command}: {result.status} ({result.duration_s:.1f}s)"
+        )
+        if result.error:
+            self._test_log.write(f"    error: {result.error}")
+
+    def _log_step(self, step: int, test_time: timedelta) -> None:
+        """Вывод промежуточного прогресса в step-log."""
+        self._step_log.write(f"step={step}  elapsed={test_time}")
 
     # ── Жизненный цикл ──────────────────────────────────
     def on_mount(self) -> None:
@@ -390,6 +430,7 @@ class SlotLargeCard(Widget):
         self.slot.on_progress_change(self._on_progress)
         self.slot.on_channels_change(self._on_channels)
 
+
         # Инициализация реактивных атрибутов
         self.voltage = self.slot.v
         self.current = self.slot.a
@@ -411,6 +452,12 @@ class SlotLargeCard(Widget):
         self.watch_power_is_on(self.power_is_on)
 
         self.append_log(f"Card for {self.slot.name} mounted", "INFO")
+
+        self._test_log = self.query_one(f"#test-log-slot-{self.slot.slot_id}", RichLog)
+        self._step_log = self.query_one(f"#step-log-slot-{self.slot.slot_id}", RichLog)
+
+        # Подписка на результаты тестов (реальное время)
+        self.slot.on_test_result(self._on_test_result)
 
 
 

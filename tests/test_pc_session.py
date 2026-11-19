@@ -49,7 +49,7 @@ class FakeChannel:
 
 @pytest.fixture
 async def session():
-    primary = FakeChannel("tcp")
+    primary = FakeChannel("connection")
     backup = FakeChannel("serial")
     s = PcSession("slot1", primary, backup)
     await s.start()

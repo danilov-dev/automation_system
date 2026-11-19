@@ -22,7 +22,7 @@ from host.app.utils.console_logger import ConsoleLogger, LogLevel
 
 
 class TcpChannel:
-    name = "tcp"
+    name = "connection"
 
     def __init__(self, slot_id: str):
         self.slot_id = slot_id
@@ -74,13 +74,13 @@ class TcpChannel:
     async def send(self, msg: dict) -> None:
         """Отправить сообщение"""
         if not self.is_alive:
-            raise ChannelDead(f"[{self.slot_id}] tcp not alive")
+            raise ChannelDead(f"[{self.slot_id}] connection not alive")
         try:
             self._writer.write(encode(msg))
             await self._writer.drain()
         except (ConnectionResetError, BrokenPipeError, OSError) as e:
             self._writer = None
-            raise ChannelDead(f"[{self.slot_id}] tcp write failed: {e}") from e
+            raise ChannelDead(f"[{self.slot_id}] connection write failed: {e}") from e
 
     async def incoming(self) -> AsyncIterator[dict]:
         """Итератор обработанных сообщений """

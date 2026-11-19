@@ -19,12 +19,20 @@ simulate_power_restore() — симулировать восстановлени
 import asyncio
 import logging
 import random
+import time
 from typing import Callable, Optional, Awaitable, Union
+
+import serial
+from pyftdi.gpio import GpioAsyncController
 
 # callback(v, a, wt)
 MetricsCallback = Callable[[float, float, float], Union[None, Awaitable[None]]]
 # callback(is_on)
 PowerCallback = Callable[[bool], None]
+
+# --- Удалить при переходе на 'raspberry pie'. Только для отладки с платой на ft232rq
+PORT = '/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_BGB4IMJ2-if00-port0'
+# ----
 
 
 class PowerControl:
@@ -47,6 +55,12 @@ class PowerControl:
         # ── Симуляция ───────────────────────────────────
         self._simulation_task: Optional[asyncio.Task] = None
         self._load_factor: float = 1.0  # множитель нагрузки (для симуляции тестов)
+        # ---- Для платы на ft232rq
+        self.ser = serial.Serial(port=PORT, baudrate=9600, timeout=1)
+        self.ser.setRTS(False)
+        time.sleep(0.1)
+        # ------
+
 
     # ── Свойства ────────────────────────────────────────
     @property
@@ -79,7 +93,15 @@ class PowerControl:
         """Подать питание. Запускает симуляцию метрик."""
         if self._is_on:
             return
-        await asyncio.sleep(0.1)  # имитация задержки реле
+        # имитация задержки реле
+        # await asyncio.sleep(0.1)
+
+        try:
+            self.ser.setRTS(True)
+        except Exception as e:
+            self.logger.error(f"power on error: {e}")
+            return
+
         self._is_on = True
         self.logger.info("POWER ON (stub)")
         self._notify_change(True)
@@ -91,7 +113,16 @@ class PowerControl:
             return
         self._stop_simulation()
         self._is_on = False
-        await asyncio.sleep(0.1)
+
+        # имитация задержки реле
+        # await asyncio.sleep(0.1)
+
+        try:
+            self.ser.setRTS(False)
+        except Exception as e:
+            self.logger.error(f"power on error: {e}")
+            return
+
         self.logger.info("POWER OFF (stub)")
         self._update_metrics(0.0, 0.0, 0.0)
         self._notify_change(False)

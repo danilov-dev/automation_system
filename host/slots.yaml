@@ -14,8 +14,8 @@ slots:
   slot1:
 #    com_log:  /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_A50285BI-if00-port0
 #    com_log:  /dev/serial/by-id/usb-Moxa_Inc._UPort_1150-if00-port0
-    com_log:  /dev/serial/by-id/usb-Moxa_Technologies_Co.__Ltd._UPort_1150-if00-port0
-    com_ctrl: /dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0
+    com_log:  /dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller_CBBSb119D15-if00-port0
+    com_ctrl: /dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller_CMDUb119D15-if00-port0
     login: ad
     password: "12345678"
     tcp_ip: 192.168.1.101

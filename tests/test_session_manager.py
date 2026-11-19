@@ -34,7 +34,7 @@ def cfg_with_slot(tmp_path, pty_pair):
     os.set_blocking(master2, False)
 
     content = f"""
-tcp:
+connection:
   host: 127.0.0.1
   port: 0
   hello_timeout: 2.0
