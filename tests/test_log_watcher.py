@@ -166,7 +166,7 @@ async def test_boot_automation_login_then_password(pty_pair):
     master, slave_name = pty_pair
     w = LogWatcher("slot1", slave_name, idle_timeout=0.1)
     boot = BootAutomation(w, login="ad", password="12345678",
-                          success_patterns=["~ #", "~ $"])
+                          success_patterns=["~#", "~$"])
     await w.start()
     try:
         os.write(master, b"login:")
@@ -245,7 +245,51 @@ async def test_stop_cancels_pending_callbacks(pty_pair):
     # если stop() не отменил задачу — тест бы завис на 10 сек
 
 
-async def test_open_nonexistent_raises():
-    w = LogWatcher("slot1", "/dev/ttyDOESNOTEXIST")
-    with pytest.raises(RuntimeError):
-        await w.start()
+async def test_open_nonexistent_retries_in_background():
+    w = LogWatcher(
+        "slot1",
+        "/dev/ttyDOESNOTEXIST",
+        reconnect_initial_delay=0.01,
+        reconnect_max_delay=0.02,
+    )
+    await w.start()
+    try:
+        await asyncio.sleep(0.05)
+        assert not w.is_alive
+        assert w._reader_task is not None
+        assert not w._reader_task.done()
+    finally:
+        await w.stop()
+
+
+async def test_callbacks_are_executed_in_order(pty_pair):
+    master, port = pty_pair
+    w = LogWatcher("slot1", port, idle_timeout=0.1)
+    order = []
+    complete = asyncio.Event()
+
+    async def first(line):
+        await asyncio.sleep(0.03)
+        order.append(("first", line))
+
+    def second(line):
+        order.append(("second", line))
+        if line == "two":
+            complete.set()
+
+    w.register_rule(["one", "two"], first, name="first")
+    w.register_rule(["one", "two"], second, name="second")
+    await w.start()
+    try:
+        await asyncio.sleep(0.05)
+        read_master(master, timeout=0.05)
+        os.write(master, b"one\ntwo\n")
+        await asyncio.wait_for(complete.wait(), timeout=1.0)
+        assert order == [
+            ("first", "one"),
+            ("second", "one"),
+            ("first", "two"),
+            ("second", "two"),
+        ]
+    finally:
+        await w.stop()

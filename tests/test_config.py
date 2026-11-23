@@ -3,54 +3,55 @@ from pathlib import Path
 
 import pytest
 
-from app.config import load_config, ConfigError
+from app.config import ConfigError, load_config
 
 
 def write_tmp(tmp_path: Path, content: str) -> Path:
-    p = tmp_path / "slots.yaml"
-    p.write_text(textwrap.dedent(content), encoding="utf-8")
-    return p
+    path = tmp_path / "slots.yaml"
+    path.write_text(textwrap.dedent(content), encoding="utf-8")
+    return path
 
 
 def test_loads_full_config(tmp_path):
-    p = write_tmp(tmp_path, """
-        connection:
+    path = write_tmp(tmp_path, """
+        ws:
           host: 127.0.0.1
           port: 9000
           hello_timeout: 3.0
+          ping_interval: 4.0
+          ping_timeout: 2.0
         slots:
           slot1:
             com_log: /dev/ttyUSB0
             com_ctrl: /dev/ttyUSB1
             login: root
             password: secret
-            tcp_ip: 10.0.0.1
     """)
-    cfg = load_config(p)
-    assert cfg.tcp.host == "127.0.0.1"
-    assert cfg.tcp.port == 9000
-    assert cfg.tcp.hello_timeout == 3.0
-    assert set(cfg.slots) == {"slot1"}
-    s = cfg.slots["slot1"]
-    assert s.slot_id == "slot1"
-    assert s.com_log == "/dev/ttyUSB0"
-    assert s.login == "root"
-    assert s.password == "secret"
-    assert s.tcp_ip == "10.0.0.1"
+    config = load_config(path)
+    assert config.ws.host == "127.0.0.1"
+    assert config.ws.port == 9000
+    assert config.ws.hello_timeout == 3.0
+    assert config.ws.ping_interval == 4.0
+    assert config.ws.ping_timeout == 2.0
+    assert set(config.slots) == {"slot1"}
+    slot = config.slots["slot1"]
+    assert slot.slot_id == "slot1"
+    assert slot.com_log == "/dev/ttyUSB0"
+    assert slot.login == "root"
+    assert slot.password == "secret"
 
 
 def test_defaults_applied(tmp_path):
-    p = write_tmp(tmp_path, """
+    path = write_tmp(tmp_path, """
         slots:
           slot1:
             com_log: /dev/a
             com_ctrl: /dev/b
     """)
-    cfg = load_config(p)
-    assert cfg.tcp.host == "0.0.0.0"
-    assert cfg.tcp.port == 8765
-    assert cfg.slots["slot1"].login == "ad"
-    assert cfg.slots["slot1"].tcp_ip is None
+    config = load_config(path)
+    assert config.ws.host == "0.0.0.0"
+    assert config.ws.port == 8765
+    assert config.slots["slot1"].login == "ad"
 
 
 def test_missing_file():
@@ -59,28 +60,27 @@ def test_missing_file():
 
 
 def test_missing_required_field(tmp_path):
-    p = write_tmp(tmp_path, """
+    path = write_tmp(tmp_path, """
         slots:
           slot1:
             com_log: /dev/a
     """)
     with pytest.raises(ConfigError, match="com_ctrl"):
-        load_config(p)
+        load_config(path)
 
 
 def test_empty_slots(tmp_path):
-    p = write_tmp(tmp_path, "slots: {}\n")
+    path = write_tmp(tmp_path, "slots: {}\n")
     with pytest.raises(ConfigError):
-        load_config(p)
+        load_config(path)
 
 
-def test_slot_key_becomes_pc_id(tmp_path):
-    p = write_tmp(tmp_path, """
+def test_slot_key_becomes_slot_id(tmp_path):
+    path = write_tmp(tmp_path, """
         slots:
           myslot:
             com_log: /dev/a
             com_ctrl: /dev/b
     """)
-    cfg = load_config(p)
-    assert "myslot" in cfg.slots
-    assert cfg.slots["myslot"].slot_id == "myslot"
+    config = load_config(path)
+    assert config.slots["myslot"].slot_id == "myslot"

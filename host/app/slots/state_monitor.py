@@ -188,27 +188,20 @@ class SlotMonitor:
     async def _probe_device(self, timeout: float = 2.0) -> bool:
         """
         'Стучится' в COM-порт, чтобы проверить, живо ли устройство.
-        Отправляет \\n и ждет, пока BootAutomation не обнаружит приглашение оболочки.
+        Отправляет \n и ждет, пока BootAutomation не обнаружит приглашение оболочки.
         """
         if not self.log_watcher.is_alive:
             return False
 
-        # Запоминаем состояние, чтобы восстановить его ТОЛЬКО при неудаче
-        was_logged = self.boot_automation.is_logged_in
-
-        # Временно сбрасываем флаги, чтобы отловить свежую реакцию на наш "стук"
-        self.boot_automation.is_logged_in = False
-        self.boot_automation._auth_sent = False
-
-        # Стучимся
-        await self.log_watcher.send_line("\n")
-
-        start_time = asyncio.get_running_loop().time()
-        while asyncio.get_running_loop().time() - start_time < timeout:
-            if self.boot_automation.is_logged_in:
-                return True
-            await asyncio.sleep(0.1)
-
-        # Не удалось — восстанавливаем старое состояние
-        self.boot_automation.is_logged_in = was_logged
-        return False
+        previous_auth_state = self.boot_automation.begin_probe()
+        try:
+            await self.log_watcher.send_line("\n")
+            start_time = asyncio.get_running_loop().time()
+            while asyncio.get_running_loop().time() - start_time < timeout:
+                if self.boot_automation.is_logged_in:
+                    return True
+                await asyncio.sleep(0.1)
+            return False
+        finally:
+            if not self.boot_automation.is_logged_in:
+                self.boot_automation.restore_state(previous_auth_state)

@@ -1,23 +1,17 @@
-"""
-Channel — абстракция транспорта (web socket или Serial).
-
-"""
-from typing import Protocol, AsyncIterator, runtime_checkable
+"""Transport protocol and common transport errors."""
+from typing import AsyncIterator, Protocol, runtime_checkable
 
 
 class ChannelError(Exception):
-    """Базовая ошибка канала."""
-    pass
+    """Base error raised by a channel."""
 
 
 class ChannelDead(ChannelError):
-    """Канал недоступен: порт закрыт, соединение сброшено, writer отсутствует."""
-    pass
+    """The channel is unavailable or failed while sending."""
 
 
 @runtime_checkable
 class Channel(Protocol):
-    """Контракт транспорта."""
     name: str
 
     @property

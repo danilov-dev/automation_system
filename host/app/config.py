@@ -1,22 +1,12 @@
-"""
-Загрузка и валидация slots.yaml.
-"""
+"""Load and validate slots.yaml."""
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 import yaml
 
 
 class ConfigError(Exception):
-    pass
-
-
-@dataclass
-class TcpConfig:
-    host: str = "0.0.0.0"
-    port: int = 8765
-    hello_timeout: float = 5.0
+    """Invalid application configuration."""
 
 
 @dataclass
@@ -35,7 +25,6 @@ class SlotConfig:
     com_ctrl: str
     login: str = "ad"
     password: str = "12345678"
-    tcp_ip: Optional[str] = None
 
 
 @dataclass
@@ -44,60 +33,63 @@ class AppConfig:
     slots: dict[str, SlotConfig] = field(default_factory=dict)
 
     def get_slot(self, slot_id: str) -> SlotConfig:
-        if slot_id not in self.slots:
-            raise ConfigError(f"slot {slot_id!r} не найден в конфиге")
-        return self.slots[slot_id]
+        try:
+            return self.slots[slot_id]
+        except KeyError as exc:
+            raise ConfigError(f"slot {slot_id!r} not found in config") from exc
 
 
 def load_config(path: str | Path) -> AppConfig:
-    """Инициализация настроек. Загрузка конфигурационного файла"""
-    p = Path(path)
-    if not p.exists():
-        raise ConfigError(f"файл конфига не найден: {p}")
+    config_path = Path(path)
+    if not config_path.exists():
+        raise ConfigError(f"config file not found: {config_path}")
 
     try:
-        raw = yaml.safe_load(p.read_text(encoding="utf-8"))
-    except yaml.YAMLError as e:
-        raise ConfigError(f"невалидный YAML: {e}") from e
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"invalid YAML: {exc}") from exc
 
     if not isinstance(raw, dict):
-        raise ConfigError("корень конфига должен быть словарём")
+        raise ConfigError("config root must be a mapping")
 
     ws_raw = raw.get("ws") or {}
-
     if not isinstance(ws_raw, dict):
-        raise ConfigError("секция ws должна быть словарём")
+        raise ConfigError("ws section must be a mapping")
 
-    ws = WsConfig(
-        host=str(ws_raw.get("host", "0.0.0.0")),
-        port=int(ws_raw.get("port", 8765)),
-        hello_timeout=float(ws_raw.get("hello_timeout", 5.0)),
-        ping_interval=float(ws_raw.get("ping_interval", 10.0)),
-        ping_timeout=float(ws_raw.get("ping_timeout", 10.0)),
-    )
+    try:
+        ws = WsConfig(
+            host=str(ws_raw.get("host", "0.0.0.0")),
+            port=int(ws_raw.get("port", 8765)),
+            hello_timeout=float(ws_raw.get("hello_timeout", 5.0)),
+            ping_interval=float(ws_raw.get("ping_interval", 10.0)),
+            ping_timeout=float(ws_raw.get("ping_timeout", 10.0)),
+        )
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"invalid ws configuration: {exc}") from exc
+
+    if not 0 <= ws.port <= 65535:
+        raise ConfigError("ws.port must be between 0 and 65535")
+    if ws.hello_timeout <= 0 or ws.ping_interval <= 0 or ws.ping_timeout <= 0:
+        raise ConfigError("ws timeouts must be positive")
 
     slots_raw = raw.get("slots")
     if not isinstance(slots_raw, dict) or not slots_raw:
-        raise ConfigError("секция slots пуста или отсутствует")
+        raise ConfigError("slots section is empty or missing")
 
     slots: dict[str, SlotConfig] = {}
-    for slot_id, s in slots_raw.items():
-        if not isinstance(s, dict):
-            raise ConfigError(f"slot {slot_id!r}: должен быть словарём")
-        for req in ("com_log", "com_ctrl"):
-            if not s.get(req):
-                raise ConfigError(f"slot {slot_id!r}: не задан {req}")
-        try:
-            cfg = SlotConfig(
-                slot_id=str(slot_id),
-                com_log=str(s["com_log"]),
-                com_ctrl=str(s["com_ctrl"]),
-                login=str(s.get("login", "ad")),
-                password=str(s.get("password", "12345678")),
-                tcp_ip=(str(s["tcp_ip"]) if s.get("tcp_ip") else None),
-            )
-        except TypeError as e:
-            raise ConfigError(f"slot {slot_id!r}: неверные поля ({e})") from e
-        slots[cfg.slot_id] = cfg
+    for raw_slot_id, slot_raw in slots_raw.items():
+        slot_id = str(raw_slot_id)
+        if not isinstance(slot_raw, dict):
+            raise ConfigError(f"slot {slot_id!r} must be a mapping")
+        for required in ("com_log", "com_ctrl"):
+            if not slot_raw.get(required):
+                raise ConfigError(f"slot {slot_id!r}: missing {required}")
+        slots[slot_id] = SlotConfig(
+            slot_id=slot_id,
+            com_log=str(slot_raw["com_log"]),
+            com_ctrl=str(slot_raw["com_ctrl"]),
+            login=str(slot_raw.get("login", "ad")),
+            password=str(slot_raw.get("password", "12345678")),
+        )
 
     return AppConfig(ws=ws, slots=slots)

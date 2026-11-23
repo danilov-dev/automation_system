@@ -288,7 +288,7 @@ class Slot:
                 self.logger.warning(f"Serial channel failed to start: {e}")
             await self.log_watcher.start()
 
-            self._router.start_pumps()
+            await self._router.start_pumps()
             self._controller.on_channels_established()
             self.logger.info("Channels restarted successfully")
         except Exception as e:
@@ -317,7 +317,7 @@ class Slot:
             self._controller.on_fatal_error(f"The slot '{self.slot_id}' did not receive power.")
             self._started = False
             raise Exception(f"The slot '{self.slot_id}' did not receive power.")
-        self._router.start_pumps()
+        await self._router.start_pumps()
         await self._monitor.start()
 
     async def stop(self) -> None:
