@@ -153,44 +153,49 @@ class LogWatcher:
     async def _connection_loop(self) -> None:
         delay = self.reconnect_initial_delay
         while self._running:
-            if self._ser is None:
-                try:
-                    serial_port = aioserial.AioSerial(
-                        port=self.port, baudrate=self.baudrate, timeout=0.1
-                    )
-                except (serial.SerialException, OSError) as exc:
-                    self._alive = False
-                    self.logger.warning(
-                        "Cannot open %s: %s; retry in %.1fs", self.port, exc, delay
-                    )
-                    await self._wait_before_retry(delay)
-                    delay = min(delay * 2, self.reconnect_max_delay)
-                    continue
-                self._ser = serial_port
-                self._alive = True
-                delay = self.reconnect_initial_delay
-                self.logger.info("LogWatcher connected to %s@%s", self.port, self.baudrate)
-                await self._check_auth()
-                if self._ser is None:
-                    await self._wait_before_retry(delay)
-                    delay = min(delay * 2, self.reconnect_max_delay)
-                    continue
-            serial_port = self._ser
-            if serial_port is None:
-                continue
             try:
-                await self._read_connection(serial_port)
+                serial_port = aioserial.AioSerial(
+                    port=self.port,
+                    baudrate=self.baudrate,
+                    timeout=0.1,
+                )
             except asyncio.CancelledError:
                 raise
-            except (serial.SerialException, OSError) as exc:
-                self.logger.warning("LogWatcher %s disconnected: %s", self.port, exc)
+            except Exception as exc:
+                self._alive = False
+                self.logger.warning(
+                    "Cannot open %s: %s; retry in %.1fs", self.port, exc, delay
+                )
+                await self._wait_before_retry(delay)
+                delay = min(delay * 2, self.reconnect_max_delay)
+                continue
+
+            self._ser = serial_port
+            self._alive = True
+            delay = self.reconnect_initial_delay
+            self.logger.info(
+                "LogWatcher connected to %s@%s", self.port, self.baudrate
+            )
+            try:
+                await self._check_auth()
+                if self._ser is serial_port:
+                    await self._read_connection(serial_port)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self.logger.warning(
+                    "LogWatcher connection %s failed: %s", self.port, exc
+                )
             finally:
                 if self._ser is serial_port:
                     self._ser = None
                 self._alive = False
                 self._close_port(serial_port)
+
             if self._running:
-                self.logger.info("Reconnecting to %s in %.1fs", self.port, delay)
+                self.logger.info(
+                    "Reconnecting to %s in %.1fs", self.port, delay
+                )
                 await self._wait_before_retry(delay)
                 delay = min(delay * 2, self.reconnect_max_delay)
 

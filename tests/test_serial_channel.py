@@ -127,3 +127,20 @@ async def test_partial_message_reassembled_with_mock(patched_aioserial):
     assert len(received) == 1
     assert received[0]["type"] == "report"
     assert received[0]["task_id"] == "t1"
+
+async def test_restart_uses_a_fresh_incoming_queue(patched_aioserial):
+    _, _ = patched_aioserial
+    ch = SerialChannel(slot_id="slot1", port="COM3")
+    await ch.start()
+    await ch.stop()
+    await ch.start()
+
+    async def wait_for_message():
+        return await ch.incoming().__anext__()
+
+    reader = asyncio.create_task(wait_for_message())
+    await asyncio.sleep(0.02)
+    assert not reader.done()
+    await ch.stop()
+    with pytest.raises(StopAsyncIteration):
+        await reader

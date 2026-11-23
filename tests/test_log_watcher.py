@@ -145,6 +145,8 @@ async def test_send_line_writes_to_port(pty_pair):
     w = LogWatcher("slot1", slave_name, idle_timeout=0.1)
     await w.start()
     try:
+        await asyncio.sleep(0.05)
+        read_master(master, timeout=0.05)
         await w.send_line("mylogin")
         await asyncio.sleep(0.1)
         data = read_master(master)
@@ -169,6 +171,8 @@ async def test_boot_automation_login_then_password(pty_pair):
                           success_patterns=["~#", "~$"])
     await w.start()
     try:
+        await asyncio.sleep(0.05)
+        read_master(master, timeout=0.05)
         os.write(master, b"login:")
         await asyncio.sleep(0.2)
         assert read_master(master) == b"ad\n"
@@ -190,6 +194,8 @@ async def test_boot_automation_does_not_resend_login(pty_pair):
     boot = BootAutomation(w, login="ad", password="pw")
     await w.start()
     try:
+        await asyncio.sleep(0.05)
+        read_master(master, timeout=0.05)
         os.write(master, b"login:")
         await asyncio.sleep(0.2)
         _ = read_master(master)          # съедаем первый логин
@@ -208,6 +214,8 @@ async def test_boot_automation_reset_on_new_login(pty_pair):
                           success_patterns=["~#"])
     await w.start()
     try:
+        await asyncio.sleep(0.05)
+        read_master(master, timeout=0.05)
         os.write(master, b"login:")
         await asyncio.sleep(0.15)
         os.write(master, b"Password:")

@@ -150,7 +150,7 @@ class SerialChannel:
                     await asyncio.sleep(0.01)
         except asyncio.CancelledError:
             raise
-        except (serial.SerialException, OSError) as exc:
+        except Exception as exc:
             self.logger.warning("[%s] serial read failed: %s", self.slot_id, exc)
         finally:
             if self._ser is serial_port:
