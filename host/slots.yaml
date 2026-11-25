@@ -16,6 +16,7 @@ slots:
 #    com_log:  /dev/serial/by-id/usb-Moxa_Inc._UPort_1150-if00-port0
     com_log:  /dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller_CBBSb119D15-if00-port0
     com_ctrl: /dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller_CMDUb119D15-if00-port0
+    com_power: '/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_BGB4IMJ2-if00-port0'
     login: ad
     password: "12345678"
     tcp_ip: 192.168.1.101

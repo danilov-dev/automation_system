@@ -33,6 +33,7 @@ class SlotConfig:
     slot_id: str
     com_log: str
     com_ctrl: str
+    com_power: str
     login: str = "ad"
     password: str = "12345678"
     tcp_ip: Optional[str] = None
@@ -92,6 +93,7 @@ def load_config(path: str | Path) -> AppConfig:
                 slot_id=str(slot_id),
                 com_log=str(s["com_log"]),
                 com_ctrl=str(s["com_ctrl"]),
+                com_power=str(s["com_power"]),
                 login=str(s.get("login", "ad")),
                 password=str(s.get("password", "12345678")),
                 tcp_ip=(str(s["tcp_ip"]) if s.get("tcp_ip") else None),

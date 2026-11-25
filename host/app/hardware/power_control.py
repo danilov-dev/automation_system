@@ -25,6 +25,8 @@ from typing import Callable, Optional, Awaitable, Union
 import serial
 from pyftdi.gpio import GpioAsyncController
 
+from host.app.hardware.transports import PowerTransport
+
 # callback(v, a, wt)
 MetricsCallback = Callable[[float, float, float], Union[None, Awaitable[None]]]
 # callback(is_on)
@@ -38,10 +40,12 @@ PORT = '/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_BGB4IMJ2-if00-port0'
 class PowerControl:
     """Заглушка управления питанием с симуляцией метрик."""
 
-    def __init__(self, slot_id: str):
+    def __init__(self, slot_id: str, transport:PowerTransport):
         self.pc_id = slot_id
         self._is_on = False
+        self._lock = asyncio.Lock()
         self.logger = logging.getLogger(f"slot_{slot_id}")
+        self._transport = transport
 
         # ── Подписчики ──────────────────────────────────
         self._on_change_callbacks: list[PowerCallback] = []
@@ -56,9 +60,7 @@ class PowerControl:
         self._simulation_task: Optional[asyncio.Task] = None
         self._load_factor: float = 1.0  # множитель нагрузки (для симуляции тестов)
         # ---- Для платы на ft232rq
-        self.ser = serial.Serial(port=PORT, baudrate=9600, timeout=1)
-        self.ser.setRTS(False)
-        time.sleep(0.1)
+        self.ser = None
         # ------
 
 
@@ -90,20 +92,11 @@ class PowerControl:
 
     # ── Команды управления ──────────────────────────────
     async def power_on(self) -> None:
-        """Подать питание. Запускает симуляцию метрик."""
         if self._is_on:
             return
-        # имитация задержки реле
-        # await asyncio.sleep(0.1)
-
-        try:
-            self.ser.setRTS(True)
-        except Exception as e:
-            self.logger.error(f"power on error: {e}")
-            return
-
+        async with self._lock:
+            await self._transport.set_power(True)
         self._is_on = True
-        self.logger.info("POWER ON (stub)")
         self._notify_change(True)
         self._start_simulation()
 
@@ -111,17 +104,11 @@ class PowerControl:
         """Снять питание. Останавливает симуляцию и сбрасывает метрики."""
         if not self._is_on:
             return
+        async with self._lock:
+            await self._transport.set_power(False)
+
         self._stop_simulation()
         self._is_on = False
-
-        # имитация задержки реле
-        # await asyncio.sleep(0.1)
-
-        try:
-            self.ser.setRTS(False)
-        except Exception as e:
-            self.logger.error(f"power on error: {e}")
-            return
 
         self.logger.info("POWER OFF (stub)")
         self._update_metrics(0.0, 0.0, 0.0)

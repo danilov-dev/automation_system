@@ -7,6 +7,8 @@ Board -> Slot.board
 НЕ запускает ничего. Старт/стоп — забота SlotManager.
 """
 import logging
+
+from host.app.hardware.transports import SerialRtsTransport
 from host.app.board import Board
 from host.app.routers.ws_router import WsRouter
 from host.app.channels.ws_channel import WsChannel
@@ -49,7 +51,8 @@ class SlotFabric:
         # Создаём остальные компоненты
         watcher = LogWatcher(sc.slot_id, sc.com_log)
         boot = BootAutomation(watcher, sc.login, sc.password)
-        power_control = PowerControl(sc.slot_id)
+        power_transport = SerialRtsTransport(sc.com_power)
+        power_control = PowerControl(sc.slot_id, power_transport)
 
         # Создаём плату
         board = Board(board_id=sc.slot_id)
