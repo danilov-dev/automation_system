@@ -17,9 +17,9 @@ import asyncio
 import logging
 from contextlib import suppress
 from typing import Optional, Callable
-from host.app.channels.ws_channel import WsChannel
-from host.app.channels.base import Channel
-from host.app.channels.serial_channel import SerialChannel
+from host.app.transports.ws_transport import WebSocketTransport
+from host.app.transports.base import Channel
+from host.app.transports.serial_transport import SerialTransport
 from host.app.hardware.power_control import PowerControl
 from host.app.log_watcher import LogWatcher
 from host.app.boot_automation import BootAutomation
@@ -49,8 +49,8 @@ class Slot:
     def __init__(
         self,
         slot_id: str,
-        ws_channel: WsChannel,
-        serial_channel: SerialChannel,
+        ws_channel: WebSocketTransport,
+        serial_channel: SerialTransport,
         log_watcher: LogWatcher,
         boot_automation: BootAutomation,
         power_control: PowerControl,
@@ -260,11 +260,11 @@ class Slot:
 
         if new_state == SlotState.STARTING.name:
             if not self.ws_channel.is_alive or not self.serial_channel.is_alive:
-                self.logger.info("State is STARTING. Restarting channels...")
+                self.logger.info("State is STARTING. Restarting transports...")
                 await self._restart_channels()
 
         elif new_state == SlotState.OFFLINE.name:
-            self.logger.info("State is OFFLINE. Stopping channels...")
+            self.logger.info("State is OFFLINE. Stopping transports...")
             self._tests.abort("slot went offline")
             await self._stop_channels()
 
@@ -292,8 +292,8 @@ class Slot:
             self._controller.on_channels_established()
             self.logger.info("Channels restarted successfully")
         except Exception as e:
-            self.logger.error(f"Failed to restart channels: {e}")
-            self._controller.on_fatal_error(f"Failed to restart channels: {e}")
+            self.logger.error(f"Failed to restart transports: {e}")
+            self._controller.on_fatal_error(f"Failed to restart transports: {e}")
 
     async def _stop_channels(self) -> None:
         """Остановка всех каналов."""

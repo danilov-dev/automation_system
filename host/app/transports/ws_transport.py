@@ -10,7 +10,7 @@ from .base import ChannelDead
 from host.app.protocol import encode
 
 
-class WsChannel:
+class WebSocketTransport:
     name = "ws"
 
     def __init__(self, slot_id: str):

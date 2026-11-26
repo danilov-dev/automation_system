@@ -10,7 +10,7 @@ import websockets
 from websockets.asyncio.server import Server, serve
 
 from .base_router import BaseRouter
-from host.app.channels.ws_channel import WsChannel
+from host.app.transports.ws_transport import WebSocketTransport
 from host.app.protocol import decode
 
 logger = logging.getLogger(__name__)
@@ -26,13 +26,13 @@ class WsRouter(BaseRouter):
             ping_timeout: float = 10.0,
     ):
         super().__init__(host=host, port=port, hello_timeout=hello_timeout)
-        self._channels: Dict[str, WsChannel] = {}
+        self._channels: Dict[str, WebSocketTransport] = {}
         self._server: Optional[Server] = None
         self.ping_interval = ping_interval
         self.ping_timeout = ping_timeout
 
     # ── реестр каналов ────────────────────────────────────
-    def register(self, channel: WsChannel) -> None:
+    def register(self, channel: WebSocketTransport) -> None:
         if channel.slot_id in self._channels:
             raise ValueError(f"slot_id '{channel.slot_id}' уже зарегистрирован")
         self._channels[channel.slot_id] = channel
@@ -99,7 +99,7 @@ class WsRouter(BaseRouter):
                 channel.detach()
                 logger.warning(f"[WS] Канал {channel.slot_id} отключен. Ожидается повторное подключение...", )
 
-    async def _handshake(self, ws, remote) -> Optional[WsChannel]:
+    async def _handshake(self, ws, remote) -> Optional[WebSocketTransport]:
         """Рукопожатие. Возможность подключения только нужных клиентов"""
         try:
             raw = await asyncio.wait_for(ws.recv(), timeout=self.hello_timeout)
@@ -125,7 +125,7 @@ class WsRouter(BaseRouter):
         logger.info(f"[WS] {slot_id} подключён ({remote})")
         return channel
 
-    async def _pump(self, ws, channel: WsChannel) -> None:
+    async def _pump(self, ws, channel: WebSocketTransport) -> None:
         """Прослушивание канала"""
         try:
             async for raw in ws:

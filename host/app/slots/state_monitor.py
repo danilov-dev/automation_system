@@ -25,8 +25,8 @@ from typing import Optional
 from host.app.slots.state import SlotState
 from host.app.slots.state_controller import SlotStateController
 from host.app.boot_automation import BootAutomation
-from host.app.channels.ws_channel import WsChannel
-from host.app.channels.serial_channel import SerialChannel
+from host.app.transports.ws_transport import WebSocketTransport
+from host.app.transports.serial_transport import SerialTransport
 from host.app.log_watcher import LogWatcher
 from host.app.hardware.power_control import PowerControl
 
@@ -37,8 +37,8 @@ class SlotMonitor:
     def __init__(
             self,
             slot_id: str,
-            ws_channel: WsChannel,
-            serial_channel: SerialChannel,
+            ws_channel: WebSocketTransport,
+            serial_channel: SerialTransport,
             log_watcher: LogWatcher,
             boot_automation: BootAutomation,
             power_control: PowerControl,

@@ -1,7 +1,7 @@
 from abc import ABC
 from typing import Dict
 
-from host.app.channels.base import Channel
+from host.app.transports.base import Channel
 
 
 class BaseRouter(ABC):

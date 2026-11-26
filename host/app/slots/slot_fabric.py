@@ -11,8 +11,8 @@ import logging
 from host.app.hardware.transports import SerialRtsTransport
 from host.app.board import Board
 from host.app.routers.ws_router import WsRouter
-from host.app.channels.ws_channel import WsChannel
-from host.app.channels.serial_channel import SerialChannel
+from host.app.transports.ws_transport import WebSocketTransport
+from host.app.transports.serial_transport import SerialTransport
 from host.app.config import AppConfig, SlotConfig
 from host.app.log_watcher import LogWatcher
 from host.app.boot_automation import BootAutomation
@@ -42,8 +42,8 @@ class SlotFabric:
 
     def _build_slot(self, sc: SlotConfig) -> None:
         # Создаём каналы
-        ws = WsChannel(sc.slot_id)
-        serial = SerialChannel(sc.slot_id, sc.com_ctrl)
+        ws = WebSocketTransport(sc.slot_id)
+        serial = SerialTransport(sc.slot_id, sc.com_ctrl)
 
         # Регистрируем WebSocket-канал в роутере
         self.router.register(ws)

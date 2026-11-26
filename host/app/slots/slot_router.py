@@ -14,7 +14,7 @@ import asyncio
 import logging
 from contextlib import suppress
 from typing import Callable
-from host.app.channels.base import Channel, ChannelDead
+from host.app.transports.base import Channel, ChannelDead
 from host.app.slots.exceptions import AllChannelsFailed, PendingTask
 from host.app.slots.state import SlotState
 
@@ -74,7 +74,7 @@ class TaskRouter:
                 continue
 
         if not any(ch.is_alive for ch in self.channels):
-            self._set_offline("All channels failed")
+            self._set_offline("All transports failed")
         raise AllChannelsFailed(self.slot_id, record.task_id, tried, last_err)
 
     async def _wait_report(self, record: PendingTask, ch: Channel) -> dict:

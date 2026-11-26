@@ -16,7 +16,7 @@ from host.app.protocol import encode, decode
 
 
 
-class SerialChannel:
+class SerialTransport:
     name = "serial"
 
     def __init__(
