@@ -7,6 +7,7 @@ import serial
 
 @runtime_checkable
 class PowerTransport(Protocol):
+    """Интерфейс транспорта управления питанием"""
     async def set_power(self, state: bool) -> None: ...
     async def close(self) -> None: ...
 
