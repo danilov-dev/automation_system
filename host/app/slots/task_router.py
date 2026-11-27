@@ -119,11 +119,16 @@ class TaskRouter:
         try:
             async for msg in ch.incoming():
                 msg_type = msg.get("type")
-                if msg_type == "channel_busy":
-                    ch.mark_for_testing()
-                    continue
-                if msg_type == "channel_free":
-                    ch.release_from_testing()
+                if msg_type in ("channel_busy", "channel_free"):
+                    target_name = msg.get("channel", ch.name)
+                    target = next(
+                        (item for item in self.transports if item.name == target_name),
+                        ch,
+                    )
+                    if msg_type == "channel_busy":
+                        target.mark_for_testing()
+                    else:
+                        target.release_from_testing()
                     continue
                 if msg_type not in ("report", "error"):
                     continue
