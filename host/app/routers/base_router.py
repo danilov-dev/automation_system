@@ -1,7 +1,7 @@
 from abc import ABC
 from typing import Dict
 
-from host.app.transports.base import Channel
+from host.app.transports.base import Transport
 
 
 class BaseRouter(ABC):
@@ -18,7 +18,7 @@ class BaseRouter(ABC):
 
         self.is_started = False
 
-    def register(self, channel: Channel) -> None:
+    def register(self, channel: Transport) -> None:
         """Регистрация канала в списке допустимых каналов для сервера"""
         pass
 

@@ -18,7 +18,7 @@ import logging
 from contextlib import suppress
 from typing import Optional, Callable
 from host.app.transports.ws_transport import WebSocketTransport
-from host.app.transports.base import Channel
+from host.app.transports.base import Transport
 from host.app.transports.serial_transport import SerialTransport
 from host.app.hardware.power_control import PowerControl
 from host.app.log_watcher import LogWatcher
@@ -31,7 +31,7 @@ from host.app.slots.patterns import (
     POWER_ON_PATTERNS,
     LOGIN_PROMPT_PATTERNS,
 )
-from host.app.slots.slot_router import TaskRouter
+from host.app.slots.task_router import TaskRouter
 from host.app.slots.test_runner import SlotTestRunner
 from host.app.slots.state_controller import SlotStateController
 from host.app.slots.state_monitor import SlotMonitor
@@ -83,7 +83,7 @@ class Slot:
         # Маршрутизатор задач
         self._router = TaskRouter(
             slot_id=slot_id,
-            channels=self.channels,
+            transports=self.channels,
             set_offline=lambda reason: self._controller.on_fatal_error(reason),
             pending_provider=lambda: self._tests.pending,
         )
@@ -165,7 +165,7 @@ class Slot:
         return self.boot_automation.is_logged_in
 
     @property
-    def channels(self) -> list[Channel]:
+    def channels(self) -> list[Transport]:
         return [self.ws_channel, self.serial_channel]
 
     @property

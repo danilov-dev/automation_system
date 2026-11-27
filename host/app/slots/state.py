@@ -1,7 +1,7 @@
 """
 Состояния слота (конечный автомат).
 Вынесено в отдельный модуль, чтобы избежать циклических импортов
-и позволить использовать SlotState в slot_monitor.py, slot_router.py
+и позволить использовать SlotState в slot_monitor.py, task_router.py
 и других модулях без зависимости от slot.py.
 """
 from enum import Enum, auto

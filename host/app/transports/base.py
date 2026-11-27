@@ -1,32 +1,43 @@
 """
-Channel — абстракция транспорта (web socket или Serial).
-
+Transport — абстракция транспорта (WebSocket или Serial).
 """
 from typing import Protocol, AsyncIterator, runtime_checkable
 
 
-class ChannelError(Exception):
-    """Базовая ошибка канала."""
+class TransportError(Exception):
+    """Базовая ошибка транспорта."""
     pass
 
 
-class ChannelDead(ChannelError):
-    """Канал недоступен: порт закрыт, соединение сброшено, writer отсутствует."""
+class TransportDead(TransportError):
+    """Транспорт недоступен: порт закрыт, соединение сброшено, writer отсутствует."""
     pass
 
 
 @runtime_checkable
-class Channel(Protocol):
+class Transport(Protocol):
     """Контракт транспорта."""
     name: str
-
+    
     @property
-    def is_alive(self) -> bool: ...
-
+    def is_alive(self) -> bool:
+        """Физическое состояние: порт открыт, соединение установлено."""
+        ...
+    
+    @property
+    def is_available(self) -> bool:
+        """Логическое состояние: можно ли использовать как транспорт прямо сейчас."""
+        ...
+    
     async def start(self) -> None: ...
-
     async def stop(self) -> None: ...
-
     async def send(self, msg: dict) -> None: ...
-
     def incoming(self) -> AsyncIterator[dict]: ...
+    
+    def mark_for_testing(self) -> None:
+        """Пометить транспорт как занятый тестированием."""
+        ...
+    
+    def release_from_testing(self) -> None:
+        """Освободить транспорт после тестирования."""
+        ...

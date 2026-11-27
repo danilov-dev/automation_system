@@ -5,18 +5,15 @@ TaskRouter — маршрутизация задач между каналами
 — ожидание отчётов с продлением по in_progress (_wait_report)
 — чтение входящих сообщений и распределение их по ожидающим задачам (pump)
 — управление насосами (start_pumps, stop_pumps)
-НЕ отвечает за:
-— мониторинг здоровья каналов (это SlotMonitor)
-— состояние слота (это SlotStateController)
-— владение pending-задачами (это SlotTestRunner)
 """
 import asyncio
 import logging
 from contextlib import suppress
 from typing import Callable
-from host.app.transports.base import Channel, ChannelDead
+from host.app.transports.base import Transport, TransportDead
 from host.app.slots.exceptions import AllChannelsFailed, PendingTask
 from host.app.slots.state import SlotState
+from transports.manager import TransportManager
 
 
 class TaskRouter:
@@ -25,59 +22,63 @@ class TaskRouter:
     def __init__(
         self,
         slot_id: str,
-        channels: list[Channel],
+        transports: list[Transport],
+        transport_manager: TransportManager,
         set_offline: Callable[[str], None],
         pending_provider: Callable[[], dict[str, PendingTask]],
     ):
         self.slot_id = slot_id
-        self.channels = channels
+        self.transports = transports
+        self._transport_manager = transport_manager
         self._set_offline = set_offline
         self._pending_provider = pending_provider
         self._pumps: list[asyncio.Task] = []
         self.logger = logging.getLogger(f"slot_{slot_id}")
 
     async def route(self, payload: dict, record: PendingTask) -> dict:
-        """Маршрутизация задачи с фейловером между каналами."""
+        """Маршрутизация задачи с учетом состояния каналов."""
         tried: list[str] = []
         last_err: Exception | None = None
 
-        for channel in self.channels:
-            if not channel.is_alive:
+        transports_to_try = self._get_transports_by_priority()
+
+        for transport in transports_to_try:
+            if not transport.is_alive:
                 continue
-            tried.append(channel.name)
+            tried.append(transport.name)
             try:
-                await channel.send(payload)
-                self.logger.info(f"task {record.task_id} -> {channel.name}")
-            except ChannelDead as e:
+                await transport.send(payload)
+                self.logger.info(f"task {record.task_id} -> {transport.name}")
+            except TransportDead as e:
                 last_err = e
-                self.logger.warning(f"send {channel.name} fail: {e}")
+                self.logger.warning(f"send {transport.name} fail: {e}")
                 continue
             try:
-                report = await self._wait_report(record, channel)
+                report = await self._wait_report(record, transport)
                 self.logger.info(
-                    f"task {record.task_id} <- {channel.name} ({report.get('status')})"
+                    f"task {record.task_id} <- {transport.name} ({report.get('status')})"
                 )
                 return report
             except asyncio.TimeoutError as e:
                 last_err = e
                 self.logger.warning(
-                    f"The channel:{channel.name} has exceeded the timeout limit: "
+                    f"The channel:{transport.name} has exceeded the timeout limit: "
                     f"{record.task_id}. Trying another one"
                 )
                 continue
-            except ChannelDead as e:
+            except TransportDead as e:
                 last_err = e
                 self.logger.warning(
-                    f"The channel: {channel.name} died while the task: "
+                    f"The channel: {transport.name} died while the task: "
                     f"{record.task_id} was being executed. Trying another one"
                 )
                 continue
 
-        if not any(ch.is_alive for ch in self.channels):
+        if not any(ch.is_alive for ch in self.transports):
             self._set_offline("All transports failed")
         raise AllChannelsFailed(self.slot_id, record.task_id, tried, last_err)
 
-    async def _wait_report(self, record: PendingTask, ch: Channel) -> dict:
+    async def _wait_report(self, record: PendingTask, ch: Transport) -> dict:
         """Ждём финальный отчёт. Каждый in_progress продлевает окно."""
         while True:
             record.progress.clear()
@@ -88,7 +89,7 @@ class TaskRouter:
                 )
             except asyncio.TimeoutError:
                 if not ch.is_alive:
-                    raise ChannelDead(
+                    raise TransportDead(
                         f"{ch.name} died while waiting {record.task_id}"
                     )
                 if not record.progress.is_set():
@@ -105,7 +106,7 @@ class TaskRouter:
                 self.pump(ch, pending),
                 name=f"pump-{self.slot_id}-{ch.name}",
             )
-            for ch in self.channels
+            for ch in self.transports
         ]
         self.logger.info(f"Started {len(self._pumps)} pumps")
 
@@ -124,7 +125,7 @@ class TaskRouter:
         for t in self._pumps:
             t.cancel()
 
-    async def pump(self, ch: Channel, pending: dict[str, PendingTask]) -> None:
+    async def pump(self, ch: Transport, pending: dict[str, PendingTask]) -> None:
         """Насос: чтение отчётов из канала и распределение по ожидающим задачам."""
         try:
             async for msg in ch.incoming():

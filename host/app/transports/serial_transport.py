@@ -1,102 +1,122 @@
-"""
-SerialChannel — транспорт поверх COM-порта.
-"""
+# host/app/transports/serial_transport.py
+"""Serial транспорт с поддержкой маркировки для тестирования."""
 import asyncio
-import time
 import logging
-from contextlib import suppress
-from datetime import datetime
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator
 
-import aioserial
 import serial
+import serial_asyncio
 
-from .base import ChannelDead
+from host.app.transports.base import TransportDead
 from host.app.protocol import encode, decode
 
 
-
 class SerialTransport:
+    """Serial транспорт с поддержкой маркировки для тестирования."""
     name = "serial"
 
-    def __init__(
-        self,
-        slot_id: str,
-        port: str,
-        baudrate: int = 115200,
-        idle_timeout: float = 1.0,
-    ):
+    def __init__(self, slot_id: str, port: str, baudrate: int = 115200):
         self.slot_id = slot_id
         self.port = port
         self.baudrate = baudrate
-        self.idle_timeout = idle_timeout
-        self._ser: Optional[aioserial.AioSerial] = None
-        self._alive = False
-        self._reader_task: Optional[asyncio.Task] = None
+        self._reader: asyncio.StreamReader | None = None
+        self._writer: asyncio.StreamWriter | None = None
         self._incoming: asyncio.Queue = asyncio.Queue()
-
+        self._started = False
+        self._stopped = False
+        self._testing = False  # Занят ли тестированием
+        self._read_task: asyncio.Task | None = None
         self.logger = logging.getLogger(f"slot_{slot_id}")
 
-    # ── lifecycle ──────────────────────────────────────────
     @property
     def is_alive(self) -> bool:
+        """Физическое состояние порта."""
         return (
-            self._alive
-            and self._ser is not None
-            and self._ser.is_open
+            self._started
+            and not self._stopped
+            and self._writer is not None
+            and not self._writer.is_closing()
         )
 
+    @property
+    def is_available(self) -> bool:
+        """Доступен ли транспорт (не занят тестом и физически жив)."""
+        return self.is_alive and not self._testing
+
+    def mark_for_testing(self) -> None:
+        """Пометить транспорт как занятый тестированием."""
+        self._testing = True
+        self.logger.info(f"[{self.slot_id}] serial marked for testing")
+
+    def release_from_testing(self) -> None:
+        """Освободить транспорт после тестирования."""
+        self._testing = False
+        self.logger.info(f"[{self.slot_id}] serial released from testing")
+
     async def start(self) -> None:
-        """Открыть порт"""
-        if self._alive:
+        """Открыть serial порт и запустить чтение."""
+        if self._started:
             return
+
         try:
-            self._ser = aioserial.AioSerial(
-                port=self.port,
+            self._reader, self._writer = await serial_asyncio.open_serial_connection(
+                url=self.port,
                 baudrate=self.baudrate,
-                timeout=0.1,
             )
-        except serial.SerialException as e:
-            raise ChannelDead(
-                f"не открыть {self.port}: {e}"
-            ) from e
-
-        self._alive = True
-        self._reader_task = asyncio.create_task(self._read_loop())
-
-        self.logger.info(f"Port {self.port} is open")
+            self._started = True
+            self._stopped = False
+            self._read_task = asyncio.create_task(
+                self._read_loop(),
+                name=f"serial-read-{self.slot_id}"
+            )
+            self.logger.info(
+                f"[{self.slot_id}] serial transport started on {self.port}"
+            )
+        except Exception as e:
+            self.logger.error(
+                f"[{self.slot_id}] failed to start serial on {self.port}: {e}"
+            )
+            raise
 
     async def stop(self) -> None:
-        """Закрыть порт"""
-        if not self._alive and self._ser is None:
-            return
-        self._alive = False
-        if self._reader_task:
-            self._reader_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._reader_task
-            self._reader_task = None
-        if self._ser:
-            with suppress(Exception):
-                self._ser.close()
-            self._ser = None
+        """Закрыть serial порт и остановить чтение."""
+        self._stopped = True
+        self._started = False
+
+        if self._read_task:
+            self._read_task.cancel()
+            try:
+                await self._read_task
+            except asyncio.CancelledError:
+                pass
+            self._read_task = None
+
+        if self._writer:
+            self._writer.close()
+            try:
+                await self._writer.wait_closed()
+            except Exception:
+                pass
+            self._writer = None
+            self._reader = None
+
         await self._incoming.put(None)
-        self.logger.info(f"Port {self.port} is closed")
+        self.logger.info(f"[{self.slot_id}] serial transport stopped")
 
     async def send(self, msg: dict) -> None:
-        """Отправить сообщение"""
+        """Отправить сообщение."""
         if not self.is_alive:
-            raise ChannelDead(f"[{self.slot_id}] serial not alive")
+            raise TransportDead(f"[{self.slot_id}] serial not alive")
         try:
-            await self._ser.write_async(encode(msg))
-        except (serial.SerialException, OSError) as e:
-            self._alive = False
-            raise ChannelDead(
-                f"[{self.slot_id}] write failed: {e}"
-            ) from e
+            data = encode(msg) + b"\n"
+            self._writer.write(data)
+            await self._writer.drain()
+            self.logger.debug(f"[{self.slot_id}] serial sent {msg}")
+        except Exception as e:
+            raise TransportDead(f"[{self.slot_id}] serial write failed: {e}") from e
 
     async def incoming(self) -> AsyncIterator[dict]:
-        """Итератор сообщений"""
+        """Итератор полученных сообщений."""
         while True:
             msg = await self._incoming.get()
             if msg is None:
@@ -104,52 +124,25 @@ class SerialTransport:
             yield msg
 
     async def _read_loop(self) -> None:
-        """Цикл чтения из порта"""
-        buffer = b""
-        last_data_time = time.monotonic()
+        """Цикл чтения из serial порта."""
         try:
-            while self._alive:
-                try:
-                    waiting = self._ser.in_waiting
-                except (serial.SerialException, OSError) as e:
-                    self.logger.error(f"[{self.slot_id}] read loop error: {e}")
-                    self._alive = False
+            while self.is_alive:
+                line = await self._reader.readline()
+                if not line:
                     break
-
-                if waiting:
-                    chunk = await self._ser.read_async(waiting)
-                    if chunk:
-                        buffer += chunk
-                        last_data_time = time.monotonic()
-                        while b"\n" in buffer:
-                            line, buffer = buffer.split(b"\n", 1)
-                            msg = decode(line)
-                            if msg:
-                                await self._incoming.put(msg)
-                else:
-                    if (
-                        buffer
-                        and (time.monotonic() - last_data_time) > self.idle_timeout
-                    ):
-                        msg = decode(buffer)
-                        if msg:
-                            await self._incoming.put(msg)
-                        buffer = b""
-                    await asyncio.sleep(0.01)
+                try:
+                    msg = decode(line)
+                    if msg:
+                        await self._incoming.put(msg)
+                except Exception as e:
+                    self.logger.warning(
+                        f"[{self.slot_id}] serial decode error: {e}"
+                    )
         except asyncio.CancelledError:
             raise
-        finally:
-            if not self._alive:
-                with suppress(Exception):
-                    self._incoming.put_nowait(None)
-
-    async def send_heartbeat(self):
-        """Отправить heartbeat клиенту."""
-        if not self.is_alive:
-            return
-        try:
-            heartbeat = {"type": "heartbeat", "timestamp": datetime.now().isoformat()}
-            await self.send(heartbeat)
-            self.logger.info("heartbeat send")
         except Exception as e:
-            self.logger.error(f"heartbeat send failed: {e}")
+            self.logger.error(f"[{self.slot_id}] serial read loop error: {e}")
+
+    async def push(self, msg: dict) -> None:
+        """Поместить сообщение во входящую очередь."""
+        await self._incoming.put(msg)

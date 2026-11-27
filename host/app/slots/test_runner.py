@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Callable, Awaitable, Union, Optional
 
 from host.app.slots.exceptions import PendingTask
-from host.app.slots.slot_router import TaskRouter
+from host.app.slots.task_router import TaskRouter
 from host.app.slots.state_controller import SlotStateController
 from host.app.testing.test_result import TestResult
 from host.app.testing.storage import ResultStorage, NullResultStorage
