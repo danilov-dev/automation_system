@@ -118,7 +118,14 @@ class TaskRouter:
         """Распределять входящие report/error по ожидающим задачам."""
         try:
             async for msg in ch.incoming():
-                if msg.get("type") not in ("report", "error"):
+                msg_type = msg.get("type")
+                if msg_type == "channel_busy":
+                    ch.mark_for_testing()
+                    continue
+                if msg_type == "channel_free":
+                    ch.release_from_testing()
+                    continue
+                if msg_type not in ("report", "error"):
                     continue
                 task_id = msg.get("task_id")
                 if not task_id:
